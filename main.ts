@@ -120,11 +120,15 @@ async function databaseCleanupLoop(): Promise<void> {
 /**
  * Saves incoming messages or updates edited messages in the database.
  */
-async function logMessage(ctx: Context): Promise<void> {
+export async function logMessage(ctx: Context): Promise<void> {
   const message = ctx.message || ctx.editedMessage;
   if (!message) return;
 
   const chat_id = message.chat.id;
+  if (!isChatAuthorized(chat_id)) {
+    log("DEBUG", `Unauthorized chat ${chat_id}, skipping message persistence.`);
+    return;
+  }
 
   const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
   if (!text) return;
@@ -351,7 +355,7 @@ async function startBot(): Promise<void> {
 
   const bot = new Telegraf(token);
 
-  // Log incoming messages and edits (excluding commands) — always, even for unauthorized chats
+  // Persist incoming messages and edits (excluding commands) only for authorized chats.
   bot.on(['message', 'edited_message'], async (ctx, next) => {
     try {
       const message = ctx.message || ctx.editedMessage;

@@ -10,9 +10,11 @@
     "start:debug": "DEBUG=true tsx main.ts",
     "build": "tsc",
     "test:db": "tsx test_db.ts",
+    "test:main": "tsx test_main.ts",
     "test:parser": "tsx test_parser.ts",
     "test:utils": "tsx test_utils.ts",
-    "test": "tsx test_db.ts && tsx test_parser.ts && tsx test_utils.ts"
+    "test:summarizer": "tsx test_summarizer.ts",
+    "test": "tsx test_db.ts && tsx test_main.ts && tsx test_parser.ts && tsx test_utils.ts && tsx test_summarizer.ts"
   },
   "dependencies": {
     "@google/genai": "^2.5.0",
