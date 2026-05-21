@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { SavedMessage } from './db.js';
 import { getLocale } from './locales.js';
+import { escapeHTML } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
 
@@ -101,8 +102,6 @@ export async function summarizeMessages(
     
     console.log("==================== [GEMINI API REQUEST] ====================");
     console.log(`Model: gemini-3.1-flash-lite`);
-    console.log(`System Instruction: ${systemInstruction}`);
-    console.log(`User Prompt: ${userPrompt}`);
     console.log("=============================================================");
 
     const response = await aiClient.models.generateContent({
@@ -114,13 +113,9 @@ export async function summarizeMessages(
       }
     });
 
-    console.log("==================== [GEMINI API RESPONSE] ====================");
-    console.log(JSON.stringify(response, null, 2));
-    console.log("==============================================================");
-
     return response.text || locale.failedToGenerate;
   } catch (err: any) {
     console.error("Error calling Gemini API:", err);
-    return locale.geminiError(err.message || err);
+    return locale.geminiError(escapeHTML(err.message || String(err)));
   }
 }

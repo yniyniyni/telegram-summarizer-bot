@@ -5,6 +5,7 @@ import { Telegraf, Context } from 'telegraf';
 import * as db from './db.js';
 import * as summarizer from './summarizer.js';
 import { getLocale } from './locales.js';
+import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText } from './utils.js';
 
 // Setup basic logger
 function log(level: string, message: string, ...args: any[]): void {
@@ -129,6 +130,9 @@ async function logMessage(ctx: Context): Promise<void> {
   const message = ctx.message || ctx.editedMessage;
   if (!message) return;
 
+  const chat_id = message.chat.id;
+  if (!isChatAuthorized(chat_id)) return;
+
   const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
   if (!text) return;
 
@@ -140,7 +144,6 @@ async function logMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  const chat_id = message.chat.id;
   const message_id = message.message_id;
   const timestamp = message.date; // Unix timestamp in seconds
 
@@ -184,18 +187,30 @@ async function runSummarization(ctx: Context): Promise<void> {
   if (!message || !ctx.chat) return;
   
   const chatId = ctx.chat.id;
+  const locale = getLocale();
+
+  const replyOptions: any = {};
   const threadId = ('message_thread_id' in message ? message.message_thread_id : undefined) || null;
+  if (threadId) {
+    replyOptions.message_thread_id = threadId;
+  }
+
+  if (!isChatAuthorized(chatId)) {
+    await ctx.reply(locale.chatNotAuthorized, replyOptions);
+    return;
+  }
+
+  const rateLimitResult = isRateLimited(chatId);
+  if (rateLimitResult.limited) {
+    await ctx.reply(locale.rateLimited(rateLimitResult.retryAfter || 0), replyOptions);
+    return;
+  }
+
   const text = ('text' in message ? message.text : '') || "";
   const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
 
   const [sinceTs, timeframeDesc] = parseTimeframe(text, tz);
-  log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Query text="${text}". Timeframe parsed: sinceTs=${sinceTs} (${timeframeDesc})`);
-
-  const locale = getLocale();
-  const replyOptions: any = {};
-  if (threadId) {
-    replyOptions.message_thread_id = threadId;
-  }
+  log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Timeframe parsed: sinceTs=${sinceTs} (${timeframeDesc})`);
 
   const statusMessage = await ctx.reply(
     locale.gatheringMessages,
@@ -216,7 +231,7 @@ async function runSummarization(ctx: Context): Promise<void> {
 
     log("INFO", `Retrieved ${chatMessages.length} total messages from DB. Filtered down to ${filteredMessages.length} messages for analysis.`);
     if (filteredMessages.length > 0) {
-      log("DEBUG", `Messages being analyzed:\n` + filteredMessages.map(msg => `  [${new Date(msg.timestamp * 1000).toISOString()}] ${msg.first_name}: ${msg.text}`).join('\n'));
+      log("DEBUG", `Analyzing ${filteredMessages.length} messages...`);
     }
 
     if (filteredMessages.length === 0) {
@@ -230,14 +245,12 @@ async function runSummarization(ctx: Context): Promise<void> {
       return;
     }
 
-    const summaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
+    const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
+    const summaryText = sanitizeHTML(rawSummaryText);
 
     const maxLength = 4000;
     if (summaryText.length > maxLength) {
-      const chunks = [];
-      for (let i = 0; i < summaryText.length; i += maxLength) {
-        chunks.push(summaryText.substring(i, i + maxLength));
-      }
+      const chunks = splitHTMLText(summaryText, maxLength);
 
       // Delete status message
       try {
@@ -280,7 +293,7 @@ async function runSummarization(ctx: Context): Promise<void> {
         ctx.chat.id,
         statusMessage.message_id,
         undefined,
-        locale.failedToGenerateWithError(err.message || err),
+        locale.failedToGenerateWithError(escapeHTML(err.message || String(err))),
         { parse_mode: 'HTML' }
       );
     } catch (editErr) {
@@ -306,6 +319,13 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
     const triggerKeywords = ["суммаризуй", "суммаризация", "кратко", "итог", "summary", "summarize", "отчет", "конспект", "что обсуждали", "пересказ"];
     const textLower = text.toLowerCase();
     const shouldSummarize = triggerKeywords.some(kw => textLower.includes(kw)) || isPrivate;
+
+    if (!isChatAuthorized(ctx.chat.id)) {
+      if (shouldSummarize) {
+        await ctx.reply(locale.chatNotAuthorized);
+      }
+      return;
+    }
 
     if (!shouldSummarize) {
       if (isPrivate) {
@@ -343,11 +363,9 @@ async function startBot(): Promise<void> {
     try {
       const message = ctx.message || ctx.editedMessage;
       if (message) {
-        const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
         const chat_id = message.chat.id;
-        const fromName = message.from ? `${message.from.first_name} ${message.from.last_name || ''}`.trim() : 'System/Channel';
         const type = ctx.message ? 'message' : 'edited_message';
-        log("DEBUG", `Received ${type} in chat ${chat_id} from ${fromName}: "${text}"`);
+        log("DEBUG", `Received ${type} in chat ${chat_id} (user_id=${message.from?.id || 'unknown'})`);
       }
       await logMessage(ctx);
     } catch (err) {

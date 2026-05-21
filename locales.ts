@@ -11,6 +11,8 @@ export interface Locales {
   noTextMessagesForPeriod: (timeframeDesc: string) => string;
   failedToGenerateWithError: (err: string) => string;
   welcomeMessage: (botUsername: string) => string;
+  chatNotAuthorized: string;
+  rateLimited: (retryAfter: number) => string;
   
   timeframeDefault: string;
   timeframeHour: (hours: number) => string;
@@ -70,6 +72,8 @@ ${transcript}
   gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${timeframeDesc}</b> не найдено текстовых сообщений для анализа.`,
   failedToGenerateWithError: (err) => `❌ Не удалось сгенерировать выжимку из-за ошибки: <code>${err}</code>`,
+  chatNotAuthorized: "⚠️ Этот чат не авторизован для использования бота.",
+  rateLimited: (retryAfter) => `⚠️ Превышен лимит запросов. Пожалуйста, подождите ${retryAfter} сек. перед следующей попыткой.`,
   welcomeMessage: (botUsername) => 
     "👋 <b>Привет! Я Gemini Суммаризатор чатов.</b>\n\n" +
     "Чтобы сделать краткую выжимку переписки:\n" +
@@ -162,6 +166,8 @@ ${transcript}
   gatheringMessages: "⏳ <b>Gathering messages and generating summary via Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${timeframeDesc}</b>.`,
   failedToGenerateWithError: (err) => `❌ Failed to generate summary due to error: <code>${err}</code>`,
+  chatNotAuthorized: "⚠️ This chat is not authorized to use this bot.",
+  rateLimited: (retryAfter) => `⚠️ Rate limit exceeded. Please wait ${retryAfter}s before trying again.`,
   welcomeMessage: (botUsername) => 
     "👋 <b>Hello! I am the Gemini Chat Summarizer Bot.</b>\n\n" +
     "To summarize group chat history:\n" +

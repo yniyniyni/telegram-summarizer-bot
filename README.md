@@ -33,6 +33,14 @@ By default, Telegram bots cannot read group messages unless they are directly me
 ### 3. Getting Gemini API Key
 Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.com/).
 
+### 4. Advanced Configuration (Optional)
+You can configure rate limits and whitelist specific chat IDs in your `.env` file to protect your Gemini API quota:
+*   **Rate Limiting**:
+    *   `RATE_LIMIT_MAX_REQUESTS`: Set the maximum number of summarization requests allowed per chat in the window. Disabled if unset or set to `0`.
+    *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour).
+*   **Chat Authorization Whitelist**:
+    *   `ALLOWED_CHATS`: A comma-separated list of numeric chat IDs allowed to use the bot (e.g., `-100123456789,-100987654321,12345678`). If unset or empty, authorization is disabled and anyone can use the bot.
+
 ---
 
 ## 🚀 Installation and Run
