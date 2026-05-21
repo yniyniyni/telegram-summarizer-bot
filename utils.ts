@@ -94,11 +94,12 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   }
 
   // Record current request
-  if (!rateLimits.has(chatId)) {
-    info = { timestamps: [] };
-    rateLimits.set(chatId, info);
+  let currentInfo = rateLimits.get(chatId);
+  if (!currentInfo) {
+    currentInfo = { timestamps: [] };
+    rateLimits.set(chatId, currentInfo);
   }
-  info.timestamps.push(now);
+  currentInfo.timestamps.push(now);
   return { limited: false };
 }
 
