@@ -312,19 +312,21 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
   const isMentioned = botUsername && text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
 
   if (isPrivate || isMentioned) {
-    const triggerKeywords = ["суммаризуй", "суммаризация", "кратко", "итог", "summary", "summarize", "отчет", "конспект", "что обсуждали", "пересказ"];
-    const textLower = text.toLowerCase();
-    const shouldSummarize = triggerKeywords.some(kw => textLower.includes(kw)) || isPrivate;
+    // In group chats, a @mention always triggers summarization (that's the bot's purpose).
+    // In private chats, check for trigger keywords to distinguish summarization requests
+    // from general greetings.
+    if (isPrivate) {
+      const triggerKeywords = ["суммаризуй", "суммаризация", "кратко", "итог", "summary", "summarize", "отчет", "конспект", "что обсуждали", "пересказ"];
+      const textLower = text.toLowerCase();
+      const hasTrigger = triggerKeywords.some(kw => textLower.includes(kw));
 
-
-    if (!shouldSummarize) {
-      if (isPrivate) {
+      if (!hasTrigger) {
         await ctx.reply(
           locale.welcomeMessage(botUsername || 'bot_username'),
           { parse_mode: 'HTML' }
         );
+        return;
       }
-      return;
     }
 
     await runSummarization(ctx);
