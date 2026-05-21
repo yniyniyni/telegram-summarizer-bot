@@ -1,6 +1,6 @@
 # Telegram Gemini Chat Summarizer Bot (TypeScript)
 
-[На русском](README_ru.md)
+[На русском](docs/README_ru.md)
 
 An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` framework, and the official `@google/genai` SDK for automatic message logging and summarization in group chats using the **Gemini 3.1 Flash Lite** model.
 
@@ -44,6 +44,8 @@ You can configure rate limits and whitelist specific chat IDs in your `.env` fil
 ---
 
 ## 🚀 Installation and Run
+
+For a detailed deployment guide on Linux servers (Debian/Ubuntu and Alma/Rocky Linux), please refer to the [Deployment Guide](docs/deployment.md).
 
 ### Prerequisites
 *   Node.js v18.0.0 or higher (tested on Node.js v22)
