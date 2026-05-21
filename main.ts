@@ -8,7 +8,7 @@ import { getLocale } from './locales.js';
 import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText } from './utils.js';
 
 // Setup basic logger
-function log(level: string, message: string, ...args: any[]): void {
+function log(level: string, message: string, ...args: unknown[]): void {
   const ts = new Date().toISOString();
   console.log(`[${ts}] [${level}] ${message}`, ...args);
 }
@@ -131,7 +131,6 @@ async function logMessage(ctx: Context): Promise<void> {
   if (!message) return;
 
   const chat_id = message.chat.id;
-  if (!isChatAuthorized(chat_id)) return;
 
   const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
   if (!text) return;
@@ -189,16 +188,12 @@ async function runSummarization(ctx: Context): Promise<void> {
   const chatId = ctx.chat.id;
   const locale = getLocale();
 
-  const replyOptions: any = {};
+  const replyOptions: { message_thread_id?: number } = {};
   const threadId = ('message_thread_id' in message ? message.message_thread_id : undefined) || null;
   if (threadId) {
     replyOptions.message_thread_id = threadId;
   }
 
-  if (!isChatAuthorized(chatId)) {
-    await ctx.reply(locale.chatNotAuthorized, replyOptions);
-    return;
-  }
 
   const rateLimitResult = isRateLimited(chatId);
   if (rateLimitResult.limited) {
@@ -286,14 +281,15 @@ async function runSummarization(ctx: Context): Promise<void> {
         );
       }
     }
-  } catch (err: any) {
-    log("ERROR", "Error during summarization execution:", err);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log("ERROR", "Error during summarization execution:", errMsg);
     try {
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         statusMessage.message_id,
         undefined,
-        locale.failedToGenerateWithError(escapeHTML(err.message || String(err))),
+        locale.failedToGenerateWithError(escapeHTML(errMsg)),
         { parse_mode: 'HTML' }
       );
     } catch (editErr) {
@@ -320,12 +316,6 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
     const textLower = text.toLowerCase();
     const shouldSummarize = triggerKeywords.some(kw => textLower.includes(kw)) || isPrivate;
 
-    if (!isChatAuthorized(ctx.chat.id)) {
-      if (shouldSummarize) {
-        await ctx.reply(locale.chatNotAuthorized);
-      }
-      return;
-    }
 
     if (!shouldSummarize) {
       if (isPrivate) {
@@ -352,13 +342,20 @@ async function startBot(): Promise<void> {
   }
 
   log("INFO", "Initializing SQLite database...");
-  const dbPath = process.env.DB_PATH || 'data/bot_messages.db';
+  const rawDbPath = process.env.DB_PATH || 'data/bot_messages.db';
+  const dbPath = path.resolve(rawDbPath);
+  // SEC-6: Validate DB_PATH doesn't contain path traversal
+  if (rawDbPath.includes('..')) {
+    log("FATAL", `DB_PATH contains path traversal ('..') and is rejected: ${rawDbPath}`);
+    process.exit(1);
+  }
+  log("INFO", `Database path resolved to: ${dbPath}`);
   db.setDbPath(dbPath);
   await db.initDb();
 
   const bot = new Telegraf(token);
 
-  // Log incoming messages and edits (excluding commands)
+  // Log incoming messages and edits (excluding commands) — always, even for unauthorized chats
   bot.on(['message', 'edited_message'], async (ctx, next) => {
     try {
       const message = ctx.message || ctx.editedMessage;
@@ -370,6 +367,16 @@ async function startBot(): Promise<void> {
       await logMessage(ctx);
     } catch (err) {
       log("ERROR", "Error logging message:", err);
+    }
+    return next();
+  });
+
+  // NEW-1: Authorization middleware — blocks all interactive responses for unauthorized chats
+  bot.use(async (ctx, next) => {
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined && !isChatAuthorized(chatId)) {
+      log("DEBUG", `Unauthorized chat ${chatId}, skipping interactive handlers.`);
+      return; // Do not call next() — block summarization, welcome messages, etc.
     }
     return next();
   });
@@ -389,7 +396,7 @@ async function startBot(): Promise<void> {
 
   // Schedule database cleanup task to run on boot and then once a day
   await databaseCleanupLoop();
-  setInterval(databaseCleanupLoop, 24 * 3600 * 1000);
+  const cleanupInterval = setInterval(databaseCleanupLoop, 24 * 3600 * 1000);
 
   // Poll for message and edit updates
   log("INFO", "Starting bot polling loop...");
@@ -397,9 +404,9 @@ async function startBot(): Promise<void> {
     allowedUpdates: ['message', 'edited_message']
   });
 
-  // Configure graceful shutdown
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  // Configure graceful shutdown (SEC-9: clear interval)
+  process.once('SIGINT', () => { clearInterval(cleanupInterval); bot.stop('SIGINT'); });
+  process.once('SIGTERM', () => { clearInterval(cleanupInterval); bot.stop('SIGTERM'); });
 }
 
 // Check if this module is run as the main script entry point

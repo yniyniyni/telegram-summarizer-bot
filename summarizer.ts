@@ -13,7 +13,7 @@ export function getAIClient(): GoogleGenAI {
   if (!aiInstance) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) {
-      console.warn("⚠️ Neither GEMINI_API_KEY nor GOOGLE_API_KEY environment variable is set.");
+      throw new Error("FATAL: Neither GEMINI_API_KEY nor GOOGLE_API_KEY is set. Cannot initialize AI client.");
     }
     // Instantiate GoogleGenAI
     aiInstance = new GoogleGenAI({ apiKey });
@@ -48,8 +48,8 @@ export function formatTimestamp(timestamp: number, timezone: string): string {
     }
     
     return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
-  } catch (err: any) {
-    console.error(`Error formatting timestamp ${timestamp} for timezone ${timezone}:`, err);
+  } catch (err: unknown) {
+    console.error(`Error formatting timestamp ${timestamp} for timezone ${timezone}:`, err instanceof Error ? err.message : String(err));
     // Fallback to UTC ISO string representation
     return new Date(timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19);
   }
@@ -114,8 +114,9 @@ export async function summarizeMessages(
     });
 
     return response.text || locale.failedToGenerate;
-  } catch (err: any) {
-    console.error("Error calling Gemini API:", err);
-    return locale.geminiError(escapeHTML(err.message || String(err)));
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("Error calling Gemini API:", errMsg);
+    return locale.geminiError(escapeHTML(errMsg));
   }
 }

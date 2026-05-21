@@ -105,7 +105,7 @@ async function runTests(): Promise<void> {
 
     // Purge messages older than 30 days
     const deleted = await db.cleanupOldMessages(30);
-    assert.strictEqual(deleted, 1, `Expected 1 deleted message, got {deleted}`);
+    assert.strictEqual(deleted, 1, `Expected 1 deleted message, got ${deleted}`);
 
     // Check that the old message is gone and the new one remains
     messages = await db.getMessages(123, oldTime - 10);

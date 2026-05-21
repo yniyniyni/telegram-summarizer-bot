@@ -113,7 +113,7 @@ export async function getMessages(
     FROM messages
     WHERE chat_id = ? AND timestamp >= ?
   `;
-  const params: any[] = [chatId, sinceTimestamp];
+  const params: (number | null)[] = [chatId, sinceTimestamp];
 
   if (threadId !== null && threadId !== undefined) {
     query += " AND thread_id = ?";

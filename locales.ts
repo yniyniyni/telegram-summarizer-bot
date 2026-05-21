@@ -1,3 +1,5 @@
+import { escapeHTML } from './utils.js';
+
 export interface Locales {
   noMessages: string;
   noName: string;
@@ -70,7 +72,7 @@ ${transcript}
   failedToGenerate: "Не удалось сгенерировать текст выжимки.",
   
   gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
-  noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${timeframeDesc}</b> не найдено текстовых сообщений для анализа.`,
+  noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${escapeHTML(timeframeDesc)}</b> не найдено текстовых сообщений для анализа.`,
   failedToGenerateWithError: (err) => `❌ Не удалось сгенерировать выжимку из-за ошибки: <code>${err}</code>`,
   chatNotAuthorized: "⚠️ Этот чат не авторизован для использования бота.",
   rateLimited: (retryAfter) => `⚠️ Превышен лимит запросов. Пожалуйста, подождите ${retryAfter} сек. перед следующей попыткой.`,
@@ -164,7 +166,7 @@ ${transcript}
   failedToGenerate: "Failed to generate summary text.",
   
   gatheringMessages: "⏳ <b>Gathering messages and generating summary via Gemini...</b>",
-  noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${timeframeDesc}</b>.`,
+  noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${escapeHTML(timeframeDesc)}</b>.`,
   failedToGenerateWithError: (err) => `❌ Failed to generate summary due to error: <code>${err}</code>`,
   chatNotAuthorized: "⚠️ This chat is not authorized to use this bot.",
   rateLimited: (retryAfter) => `⚠️ Rate limit exceeded. Please wait ${retryAfter}s before trying again.`,

@@ -7,7 +7,8 @@ export function escapeHTML(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /**
@@ -81,6 +82,11 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   // Filter out timestamps older than the window
   info.timestamps = info.timestamps.filter(ts => ts > cutoff);
 
+  // Clean up empty entries to prevent memory leak (NEW-3)
+  if (info.timestamps.length === 0) {
+    rateLimits.delete(chatId);
+  }
+
   if (info.timestamps.length >= maxRequests) {
     const oldestTs = info.timestamps[0];
     const retryAfter = (oldestTs + windowSec) - now;
@@ -88,6 +94,10 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   }
 
   // Record current request
+  if (!rateLimits.has(chatId)) {
+    info = { timestamps: [] };
+    rateLimits.set(chatId, info);
+  }
   info.timestamps.push(now);
   return { limited: false };
 }
@@ -103,23 +113,23 @@ export function resetRateLimits(): void {
  * Validates if the chat is authorized to use the bot based on whitelist in .env.
  * If ALLOWED_CHATS is not set, authorization is disabled and all chats are allowed.
  */
+// Cached allowed chats set for O(1) lookup (NEW-2)
+let cachedAllowedChats: Set<number> | null = null;
+let cachedAllowedChatsRaw: string | undefined = undefined;
+
 export function isChatAuthorized(chatId: number): boolean {
-  const allowedChatsStr = process.env.ALLOWED_CHATS;
-  if (!allowedChatsStr) {
-    return true; // Authorization disabled (any chat allowed)
+  const raw = process.env.ALLOWED_CHATS;
+  if (!raw) return true; // Authorization disabled (any chat allowed)
+
+  // Re-parse only if the env value changed
+  if (raw !== cachedAllowedChatsRaw) {
+    cachedAllowedChatsRaw = raw;
+    cachedAllowedChats = new Set(
+      raw.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
+    );
   }
 
-  const allowedChats = allowedChatsStr
-    .split(',')
-    .map(id => id.trim())
-    .filter(id => id.length > 0)
-    .map(id => Number(id));
-
-  if (allowedChats.length === 0) {
-    return true;
-  }
-
-  return allowedChats.includes(chatId);
+  return cachedAllowedChats!.size === 0 || cachedAllowedChats!.has(chatId);
 }
 
 /**
@@ -190,6 +200,18 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
             if (spaceLeft <= 0 || (!currentHasText && spaceLeft < maxLength / 2)) {
               if (currentHasText) {
                 chunks.push(currentChunk + currentCloseTags);
+              }
+              // Guard against infinite loop (NEW-4): if no text was pushed and
+              // spaceLeft <= 0, force at least 1 character of progress
+              if (!currentHasText && spaceLeft <= 0) {
+                const forceLen = Math.min(wordRemaining.length, Math.max(1, maxLength - currentOpenTags.length - currentCloseTags.length));
+                currentChunk = currentOpenTags + wordRemaining.substring(0, forceLen);
+                wordRemaining = wordRemaining.substring(forceLen);
+                if (wordRemaining.length > 0) {
+                  chunks.push(currentChunk + currentCloseTags);
+                  currentChunk = currentOpenTags;
+                }
+                continue;
               }
               currentChunk = currentOpenTags;
               continue;

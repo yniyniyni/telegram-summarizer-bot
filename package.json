@@ -10,7 +10,8 @@
     "build": "tsc",
     "test:db": "tsx test_db.ts",
     "test:parser": "tsx test_parser.ts",
-    "test": "tsx test_db.ts && tsx test_parser.ts"
+    "test:utils": "tsx test_utils.ts",
+    "test": "tsx test_db.ts && tsx test_parser.ts && tsx test_utils.ts"
   },
   "dependencies": {
     "@google/genai": "^2.5.0",
