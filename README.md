@@ -1,100 +1,104 @@
 # Telegram Gemini Chat Summarizer Bot (TypeScript)
 
-Асинхронный Telegram-бот на базе Node.js, TypeScript, фреймворка `telegraf` и официального SDK `@google/genai` для автоматического логирования и суммаризации сообщений в групповых чатах с помощью модели **Gemini 3.1 Flash Lite**.
+[На русском](README_ru.md)
 
-## Особенности
-*   **Логирование в реальном времени**: Бот отслеживает и записывает текстовые сообщения и подписи к медиафайлам в локальную базу данных SQLite.
-*   **Синхронизация редактирования**: Автоматически обновляет текст в базе данных, если пользователь отредактировал свое сообщение в Telegram.
-*   **Естественный парсинг времени (RU/EN)**: Поддерживает гибкие запросы к боту (например: `за последний час`, `за 3 часа`, `за сегодня`, `за 5 дней`, `yesterday` и т.д.).
-*   **Безопасность для памяти**: Фоновый процесс раз в сутки очищает сообщения старше 30 дней.
-*   **Защита разметки**: Если Gemini возвращает некорректный Markdown, бот автоматически переключается на отправку обычным текстом, чтобы избежать ошибок Telegram API.
-*   **Совместимость с темами (Threads)**: Корректно сохраняет `thread_id` для форумных супергрупп.
+An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` framework, and the official `@google/genai` SDK for automatic message logging and summarization in group chats using the **Gemini 3.1 Flash Lite** model.
 
----
-
-## 🛠️ Подготовка и настройка бота
-
-### 1. Создание бота в Telegram
-1. Напишите боту [@BotFather](https://t.me/BotFather) в Telegram.
-2. Создайте нового бота с помощью команды `/newbot`, скопируйте полученный **Telegram Bot Token**.
-
-### 2. Отключение приватности (Важно!)
-По умолчанию Telegram-боты не могут читать сообщения в группах, кроме прямых упоминаний. Чтобы бот мог накапливать историю для суммаризации:
-1. В чате с [@BotFather](https://t.me/BotFather) отправьте команду `/mybots` и выберите вашего бота.
-2. Перейдите в **Bot Settings** -> **Group Privacy**.
-3. Нажмите **Turn off** (вы должны увидеть сообщение `Privacy mode is disabled`).
-4. Если бот уже был добавлен в группу, **удалите его и добавьте заново**, чтобы настройки применились.
-5. *(Рекомендуется)*: Сделайте бота администратором в группе и выдайте ему разрешение на чтение сообщений (Read messages).
-
-### 3. Получение Gemini API Key
-Получите бесплатный или платный ключ API в [Google AI Studio](https://aistudio.google.com/).
+## Features
+*   **Real-time logging**: The bot tracks and logs text messages and media captions into a local SQLite database.
+*   **Edit synchronization**: Automatically updates message content in the database if a user edits their message in Telegram.
+*   **Natural time parsing (RU/EN)**: Supports flexible time queries (e.g. `last hour`, `for 3 hours`, `today`, `last 5 days`, `yesterday`, etc.).
+*   **Memory safe**: A background cron job cleans up messages older than 30 days once a day.
+*   **Markup protection**: If Gemini returns invalid Markdown, the bot automatically falls back to plain text mode to avoid Telegram API formatting errors.
+*   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
 
 ---
 
-## 🚀 Установка и запуск
+## 🛠️ Bot Preparation and Configuration
 
-### Требования
-*   Node.js v18.0.0 или выше (протестировано на Node.js v22)
+### 1. Creating a Telegram Bot
+1. Chat with [@BotFather](https://t.me/BotFather) on Telegram.
+2. Create a new bot using the `/newbot` command and copy the provided **Telegram Bot Token**.
 
-### Шаги установки
+### 2. Disabling Privacy Mode (Important!)
+By default, Telegram bots cannot read group messages unless they are directly mentioned. To allow the bot to collect history for summarization:
+1. In the chat with [@BotFather](https://t.me/BotFather), send the `/mybots` command and select your bot.
+2. Go to **Bot Settings** -> **Group Privacy**.
+3. Click **Turn off** (you should see a message saying `Privacy mode is disabled`).
+4. If the bot is already in your group, **remove it and add it back** for the settings to apply.
+5. *(Recommended)*: Make the bot an administrator in the group and grant it permission to read messages.
 
-1.  Клонируйте репозиторий и перейдите в его папку.
-2.  Установите необходимые зависимости с помощью npm:
+### 3. Getting Gemini API Key
+Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.com/).
+
+---
+
+## 🚀 Installation and Run
+
+### Prerequisites
+*   Node.js v18.0.0 or higher (tested on Node.js v22)
+
+### Installation Steps
+
+1.  Clone the repository and navigate to its folder.
+2.  Install the required dependencies using npm:
     ```bash
     npm install
     ```
-3.  Создайте файл конфигурации `.env` на основе примера:
+3.  Create a `.env` configuration file based on the example:
     ```bash
     cp .env.example .env
     ```
-4.  Заполните `.env` вашими токенами:
+4.  Fill in `.env` with your tokens:
     ```env
-    TELEGRAM_BOT_TOKEN=ваш_токен_телеграм_бота
-    GEMINI_API_KEY=ваш_ключ_gemini_api
+    TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+    GEMINI_API_KEY=your_gemini_api_key
     DB_PATH=data/bot_messages.db
     DEFAULT_TIMEZONE=Europe/Moscow
     ```
 
-### Тестирование работоспособности
-Вы можете запустить встроенные тесты базы данных и парсера времени перед основным запуском:
+### Testing Functionality
+You can run the built-in database and time parser tests before starting the bot:
 ```bash
 npm test
 ```
-Или раздельно:
+Or separately:
 ```bash
 npm run test:db
+```
+```bash
 npm run test:parser
 ```
 
-### Компиляция проекта (TypeScript build)
-Для сборки проекта в JavaScript используйте команду:
+### Building the Project (TypeScript compilation)
+To compile the TypeScript project into JavaScript, run:
 ```bash
 npm run build
 ```
-Скомпилированные файлы сохраняются в директорию `dist/`.
+Compiled files will be saved in the `dist/` directory.
 
-### Запуск бота
-Запустите бота в режиме прямого выполнения TypeScript-кода (с помощью `tsx`):
+### Running the Bot
+Start the bot directly using `tsx` (TypeScript execute):
 ```bash
 npm start
 ```
-Или для запуска скомпилированной версии:
+Or run the compiled version:
 ```bash
 node dist/main.js
 ```
 
 ---
 
-## 💡 Использование бота
+## 💡 Bot Usage
 
-1.  Добавьте бота в ваш групповой чат.
-2.  Общайтесь в чате как обычно — бот будет сохранять сообщения в фоновом режиме.
-3.  Чтобы получить суммаризацию сообщений, упомяните бота и укажите желаемый интервал времени в свободной форме:
-    *   `@bot_username суммаризуй за последний час`
-    *   `@bot_username сделай выжимку за 3 часа`
-    *   `@bot_username что обсуждали за сегодня?`
-    *   `@bot_username кратко за вчера`
-    *   `@bot_username суммаризация за последние 2 дня`
-    *   `@bot_username summarize last 30 minutes` (также поддерживается базовый английский)
+1.  Add the bot to your group chat.
+2.  Chat as usual — the bot will save messages in the background.
+3.  To get a summary, mention the bot and specify the desired time interval in natural language:
+    *   `@bot_username summarize the last hour`
+    *   `@bot_username get summary for 3 hours`
+    *   `@bot_username what was discussed today?`
+    *   `@bot_username briefly for yesterday`
+    *   `@bot_username summarization for the last 2 days`
+    *   `@bot_username summarize last 30 minutes` (Russian queries like `суммаризуй за последний час` are also supported)
 
-*Примечание: Если период времени не распознан, бот по умолчанию сделает выжимку за последние 24 часа.*
+*Note: If the time period cannot be parsed, the bot defaults to summarizing the last 24 hours.*
