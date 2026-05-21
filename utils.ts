@@ -12,20 +12,75 @@ export function escapeHTML(str: string): string {
 }
 
 /**
+ * Converts basic markdown formatting (headers, bold, italic, code blocks, inline code)
+ * into Telegram-compatible HTML tags.
+ */
+export function convertMarkdownToHTML(text: string): string {
+  if (!text) return "";
+
+  let result = text;
+  const codeBlocks: string[] = [];
+  const inlineCodes: string[] = [];
+
+  // 1. Stash code blocks: ```code```
+  result = result.replace(/```([\s\S]*?)```/g, (match, code) => {
+    codeBlocks.push(code);
+    return `@@CODE_BLOCK_PLACEHOLDER_${codeBlocks.length - 1}@@`;
+  });
+
+  // 2. Stash inline code: `code`
+  result = result.replace(/`([^`\n]+)`/g, (match, code) => {
+    inlineCodes.push(code);
+    return `@@INLINE_CODE_PLACEHOLDER_${inlineCodes.length - 1}@@`;
+  });
+
+  // 3. Bold: **text** or __text__ -> <b>text</b>
+  result = result.replace(/\*\*([^\s*](?:[^*]*?[^\s*])?)\*\*/g, '<b>$1</b>');
+  result = result.replace(/(?<![A-Za-z0-9_])__([^\s_](?:[^_]*?[^\s_])?)__(?![A-Za-z0-9_])/g, '<b>$1</b>');
+
+  // 4. Italic: *text* or _text_ -> <i>text</i>
+  result = result.replace(/(?<!\*)\*([^\s*](?:[^*]*?[^\s*])?)\*(?!\*)/g, '<i>$1</i>');
+  result = result.replace(/(?<![A-Za-z0-9_])_([^\s_](?:[^_]*?[^\s_])?)_(?![A-Za-z0-9_])/g, '<i>$1</i>');
+
+  // 5. Headers: ^###+ header -> <b>header</b>
+  result = result.replace(/^[ \t]*#+[ \t]+(.+)$/gm, '<b>$1</b>');
+
+  // 6. Restore inline code
+  result = result.replace(/@@INLINE_CODE_PLACEHOLDER_(\d+)@@/g, (match, index) => {
+    const code = inlineCodes[parseInt(index, 10)];
+    return `<code>${code}</code>`;
+  });
+
+  // 7. Restore code blocks
+  result = result.replace(/@@CODE_BLOCK_PLACEHOLDER_(\d+)@@/g, (match, index) => {
+    const code = codeBlocks[parseInt(index, 10)];
+    return `<pre>${code}</pre>`;
+  });
+
+  return result;
+}
+
+
+/**
  * Sanitizes HTML output from Gemini. Escapes all `<`, `>`, and `&` characters
  * except for whitelisted safe Telegram formatting tags: b, i, code, pre.
  */
 export function sanitizeHTML(input: string): string {
   if (!input) return "";
 
+  // Convert markdown to HTML before sanitization
+  const convertedInput = convertMarkdownToHTML(input);
+
   // Split string by HTML tags: </?[tagName] ...>
   // Capturing parentheses in split() ensures the tags are returned as elements of the array.
-  const parts = input.split(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g);
+  const parts = convertedInput.split(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g);
   
   // Whitelisted tags that are safe for Telegram.
   const allowedTags = new Set(['b', 'i', 'code', 'pre', '/b', '/i', '/code', '/pre']);
 
-  return parts.map((part, index) => {
+  const openTags: string[] = [];
+
+  const mapped = parts.map((part, index) => {
     // Odd indices correspond to matched tag tokens
     if (index % 2 === 1) {
       const match = part.match(/^<\/?([a-zA-Z0-9]+)/);
@@ -34,8 +89,21 @@ export function sanitizeHTML(input: string): string {
         const fullTagName = part.startsWith('</') ? `/${tagName}` : tagName;
         
         if (allowedTags.has(fullTagName)) {
-          // Normalize to clean standard tag without attributes (to avoid any HTML parser issues)
-          return part.startsWith('</') ? `</${tagName}>` : `<${tagName}>`;
+          const isClose = part.startsWith('</');
+          if (isClose) {
+            const lastIdx = openTags.lastIndexOf(tagName);
+            if (lastIdx !== -1) {
+              openTags.splice(lastIdx, 1);
+              return `</${tagName}>`;
+            }
+            return "";
+          } else {
+            if (openTags.includes(tagName)) {
+              return "";
+            }
+            openTags.push(tagName);
+            return `<${tagName}>`;
+          }
         }
       }
       // If tag is not whitelisted, treat it as plain text and escape
@@ -45,6 +113,12 @@ export function sanitizeHTML(input: string): string {
       return escapeHTML(part);
     }
   }).join('');
+
+  if (openTags.length > 0) {
+    const closeTags = [...openTags].reverse().map(tag => `</${tag}>`).join('');
+    return mapped + closeTags;
+  }
+  return mapped;
 }
 
 // In-memory store for tracking chat rate limits
@@ -60,16 +134,25 @@ const rateLimits = new Map<number, RateLimitInfo>();
  */
 export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: number } {
   const maxRequestsStr = process.env.RATE_LIMIT_MAX_REQUESTS;
-  if (!maxRequestsStr) {
+  if (maxRequestsStr === undefined || maxRequestsStr === "" || maxRequestsStr.trim() === "0") {
     return { limited: false };
   }
   const maxRequests = parseInt(maxRequestsStr, 10);
-  if (isNaN(maxRequests) || maxRequests <= 0) {
-    return { limited: false };
+  if (isNaN(maxRequests) || maxRequests < 0) {
+    return { limited: true, retryAfter: 3600 };
   }
 
-  const windowSecStr = process.env.RATE_LIMIT_WINDOW_SEC || '3600';
-  const windowSec = parseInt(windowSecStr, 10);
+  const windowSecStr = process.env.RATE_LIMIT_WINDOW_SEC;
+  let windowSec = 3600;
+  if (windowSecStr !== undefined && windowSecStr !== "") {
+    const parsedWindow = parseInt(windowSecStr, 10);
+    if (isNaN(parsedWindow) || parsedWindow <= 0) {
+      windowSec = 3600;
+    } else {
+      windowSec = parsedWindow;
+    }
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const cutoff = now - windowSec;
 
@@ -82,7 +165,7 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   // Filter out timestamps older than the window
   info.timestamps = info.timestamps.filter(ts => ts > cutoff);
 
-  // Clean up empty entries to prevent memory leak (NEW-3)
+  // Clean up empty entries to prevent memory leak
   if (info.timestamps.length === 0) {
     rateLimits.delete(chatId);
   }
@@ -104,6 +187,32 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
 }
 
 /**
+ * Safely extracts error details from a Telegram API error (or normal error)
+ * without leaking sensitive/private chat logs or tokens to the server log.
+ */
+export function safeErrorForLog(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const e = err as any;
+    const isTelegramErr = !!(
+      (e.response && (e.response.error_code !== undefined || e.response.description !== undefined)) ||
+      (e.on && (e.on.payload !== undefined || e.on.method !== undefined))
+    );
+
+    if (isTelegramErr) {
+      const code = e.response?.error_code || e.code;
+      const desc = e.response?.description || e.description || e.message;
+      const method = e.on?.method;
+      const methodStr = method ? ` (method: ${method})` : '';
+      const params = e.response?.parameters;
+      const paramsStr = params ? ` (parameters: ${JSON.stringify(params)})` : '';
+      return `Telegram API Error: [${code}] ${desc}${methodStr}${paramsStr}`;
+    }
+    return e.message || String(err);
+  }
+  return String(err);
+}
+
+/**
  * Resets the in-memory rate limits tracker (useful for tests).
  */
 export function resetRateLimits(): void {
@@ -112,17 +221,28 @@ export function resetRateLimits(): void {
 
 /**
  * Validates if the chat is authorized to use the bot based on whitelist in .env.
- * If ALLOWED_CHATS is not set, authorization is disabled and all chats are allowed.
+ * If ALLOW_ALL_CHATS is 'true', all chats are allowed.
+ * Otherwise, if ALLOWED_CHATS is undefined or empty string, authorization fails (fail-closed).
  */
-// Cached allowed chats set for O(1) lookup (NEW-2)
+// Cached allowed chats set for O(1) lookup
 let cachedAllowedChats: Set<number> | null = null;
 let cachedAllowedChatsRaw: string | undefined = undefined;
 
 export function isChatAuthorized(chatId: number): boolean {
+  if (process.env.ALLOW_ALL_CHATS === 'true') {
+    return true;
+  }
+
   const raw = process.env.ALLOWED_CHATS;
 
-  // Re-parse only if the env value changed and raw is defined
-  if (raw !== undefined && raw !== cachedAllowedChatsRaw) {
+  if (raw === undefined || raw === "") {
+    cachedAllowedChats = null;
+    cachedAllowedChatsRaw = raw;
+    return false;
+  }
+
+  // Re-parse only if the env value changed
+  if (raw !== cachedAllowedChatsRaw) {
     cachedAllowedChatsRaw = raw;
     cachedAllowedChats = new Set(
       raw.split(',')
@@ -133,14 +253,82 @@ export function isChatAuthorized(chatId: number): boolean {
     );
   }
 
-  // The ALLOWED_CHATS env var is stored in the 'raw' variable.
-  // We check whether the ALLOWED_CHATS env var is not set (raw is undefined).
-  // If it is not set, we treat it as no restriction and allow (return true).
-  // If raw is present/defined but parsed into an empty cachedAllowedChats (size 0), we fail closed and return false.
-  // Otherwise, we check cachedAllowedChats.has(chatId).
-  return raw === undefined
-    ? true
-    : (cachedAllowedChats!.size === 0 ? false : cachedAllowedChats!.has(chatId));
+  return cachedAllowedChats ? cachedAllowedChats.has(chatId) : false;
+}
+
+/**
+ * Safely truncates HTML text to a maximum character length, ensuring that tags are closed
+ * and not cut in half, and preventing duplicate tag types in the open stack.
+ */
+function truncateHTMLToLength(html: string, maxLen: number): string {
+  if (html.length <= maxLen) return html;
+
+  const parts = html.split(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g);
+  let current = "";
+  const open: string[] = [];
+  let bestFit = "";
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+
+    const isTag = i % 2 === 1;
+    if (isTag) {
+      const match = part.match(/^<\/?([a-zA-Z0-9]+)/);
+      const tagName = match ? match[1].toLowerCase() : "";
+      const isClose = part.startsWith('</');
+
+      const nextOpen = [...open];
+      if (tagName) {
+        if (isClose) {
+          const lastIdx = nextOpen.lastIndexOf(tagName);
+          if (lastIdx !== -1) nextOpen.splice(lastIdx, 1);
+        } else {
+          if (!nextOpen.includes(tagName)) {
+            nextOpen.push(tagName);
+          }
+        }
+      }
+
+      const closeTagsStr = nextOpen.map(t => `</${t}>`).reverse().join('');
+      const potential = current + part + closeTagsStr;
+      if (potential.length <= maxLen) {
+        current += part;
+        if (tagName) {
+          if (isClose) {
+            const lastIdx = open.lastIndexOf(tagName);
+            if (lastIdx !== -1) open.splice(lastIdx, 1);
+          } else {
+            if (!open.includes(tagName)) {
+              open.push(tagName);
+            }
+          }
+        }
+        bestFit = potential;
+      } else {
+        break;
+      }
+    } else {
+      let added = "";
+      for (let j = 0; j < part.length; j++) {
+        const char = part[j];
+        const closeTagsStr = open.map(t => `</${t}>`).reverse().join('');
+        const potential = current + added + char + closeTagsStr;
+        if (potential.length <= maxLen) {
+          added += char;
+          bestFit = potential;
+        } else {
+          break;
+        }
+      }
+      if (added.length < part.length) {
+        break;
+      }
+      current += part;
+    }
+  }
+
+  return bestFit;
 }
 
 /**
@@ -149,6 +337,7 @@ export function isChatAuthorized(chatId: number): boolean {
  * and then reopened at the start of the next chunk.
  */
 export function splitHTMLText(text: string, maxLength = 4000): string[] {
+  text = sanitizeHTML(text);
   if (!text) return [];
   if (text.length <= maxLength) return [text];
 
@@ -161,6 +350,21 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
   const getCloseTagsString = () => openTags.map(tag => `</${tag}>`).reverse().join('');
   // Helper to compute size of opening tags for openTags stack
   const getOpenTagsString = () => openTags.map(tag => `<${tag}>`).join('');
+
+  const safePush = (chunk: string) => {
+    // Only push if it has text content other than HTML tags
+    if (chunk.replace(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g, '').trim().length === 0) {
+      return;
+    }
+    if (chunk.length <= maxLength) {
+      chunks.push(chunk);
+    } else {
+      const truncated = truncateHTMLToLength(chunk, maxLength);
+      if (truncated.replace(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g, '').trim().length > 0) {
+        chunks.push(truncated);
+      }
+    }
+  };
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -193,7 +397,7 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
         const hasTextContent = currentChunk.replace(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g, '').trim().length > 0;
 
         if (potentialLength > maxLength && hasTextContent) {
-          chunks.push(currentChunk + closeTagsStr);
+          safePush(currentChunk + closeTagsStr);
           currentChunk = getOpenTagsString();
         }
 
@@ -210,16 +414,16 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
 
             if (spaceLeft <= 0 || (!currentHasText && spaceLeft < maxLength / 2)) {
               if (currentHasText) {
-                chunks.push(currentChunk + currentCloseTags);
+                safePush(currentChunk + currentCloseTags);
               }
-              // Guard against infinite loop (NEW-4): if no text was pushed and
+              // Guard against infinite loop: if no text was pushed and
               // spaceLeft <= 0, force at least 1 character of progress
               if (!currentHasText && spaceLeft <= 0) {
                 const forceLen = Math.min(wordRemaining.length, Math.max(1, maxLength - currentOpenTags.length - currentCloseTags.length));
                 currentChunk = currentOpenTags + wordRemaining.substring(0, forceLen);
                 wordRemaining = wordRemaining.substring(forceLen);
                 if (wordRemaining.length > 0) {
-                  chunks.push(currentChunk + currentCloseTags);
+                  safePush(currentChunk + currentCloseTags);
                   currentChunk = currentOpenTags;
                 }
                 continue;
@@ -233,7 +437,7 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
             wordRemaining = wordRemaining.substring(sliceLen);
 
             if (wordRemaining.length > 0) {
-              chunks.push(currentChunk + getCloseTagsString());
+              safePush(currentChunk + getCloseTagsString());
               currentChunk = getOpenTagsString();
             }
           }
@@ -246,11 +450,23 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
 
     // Processing tag tokens
     const closeTagsStr = getCloseTagsString();
-    const potentialLength = currentChunk.length + part.length + closeTagsStr.length;
+    let tagOverhead = 0;
+    if (isTag && tagName) {
+      if (isCloseTag) {
+        if (openTags.includes(tagName)) {
+          tagOverhead = -part.length;
+        }
+      } else {
+        if (!openTags.includes(tagName)) {
+          tagOverhead = `</${tagName}>`.length;
+        }
+      }
+    }
+    const potentialLength = currentChunk.length + part.length + closeTagsStr.length + tagOverhead;
     const hasTextContent = currentChunk.replace(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g, '').trim().length > 0;
 
     if (potentialLength > maxLength && hasTextContent) {
-      chunks.push(currentChunk + closeTagsStr);
+      safePush(currentChunk + closeTagsStr);
       currentChunk = getOpenTagsString();
     }
 
@@ -263,7 +479,9 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
           openTags.splice(lastIdx, 1);
         }
       } else {
-        openTags.push(tagName);
+        if (!openTags.includes(tagName)) {
+          openTags.push(tagName);
+        }
       }
     }
   }
@@ -271,10 +489,7 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
   if (currentChunk.trim().length > 0 || openTags.length > 0) {
     const finalCloseTags = getCloseTagsString();
     const finalStr = currentChunk + finalCloseTags;
-    // Only push if it has text content other than HTML tags
-    if (finalStr.replace(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g, '').trim().length > 0) {
-      chunks.push(finalStr);
-    }
+    safePush(finalStr);
   }
 
   return chunks;

@@ -5,104 +5,223 @@ import { Telegraf, Context } from 'telegraf';
 import * as db from './db.js';
 import * as summarizer from './summarizer.js';
 import { getLocale } from './locales.js';
-import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText, log } from './utils.js';
+import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText, log, safeErrorForLog } from './utils.js';
+
+export interface TimeframeResult {
+  sinceTs: number;
+  untilTs?: number;
+  desc: string;
+}
+
+export function validateTimezone(timezone: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: timezone });
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Calculates the local midnight epoch timestamp for a given date in a specific timezone using a convergent iteration.
+ * @param dateStr 
+ * @param timezoneName 
+ * @returns 
+ */
+export function getMidnightTimestampForDate(dateStr: string, timezoneName: string): number {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const targetLocalMs = Date.UTC(year, month - 1, day, 0, 0, 0);
+
+  let currentEstimateMs = targetLocalMs;
+  for (let iter = 0; iter < 10; iter++) {
+    const date = new Date(currentEstimateMs);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezoneName,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hourCycle: 'h23'
+    }).formatToParts(date);
+
+    const map: Record<string, string> = {};
+    for (const p of parts) {
+      map[p.type] = p.value;
+    }
+
+    const localMs = Date.UTC(
+      parseInt(map.year, 10),
+      parseInt(map.month, 10) - 1,
+      parseInt(map.day, 10),
+      parseInt(map.hour, 10),
+      parseInt(map.minute, 10),
+      parseInt(map.second, 10)
+    );
+
+    const offsetMs = localMs - currentEstimateMs;
+    const nextEstimateMs = targetLocalMs - offsetMs;
+
+    if (nextEstimateMs === currentEstimateMs) {
+      return Math.floor(currentEstimateMs / 1000);
+    }
+    currentEstimateMs = nextEstimateMs;
+  }
+  return Math.floor(currentEstimateMs / 1000);
+}
 
 /**
  * Calculates the local midnight epoch timestamp in a specific timezone.
  * @param timezoneName 
  * @returns 
  */
-export function getMidnightTimestamp(timezoneName: string): number {
-  const now = new Date();
+export function getMidnightTimestamp(timezoneName: string, nowOverride?: number): number {
+  const now = nowOverride !== undefined ? new Date(nowOverride * 1000) : new Date();
   
   // Format current date in target timezone as YYYY-MM-DD
   const tzString = now.toLocaleString('sv-SE', { timeZone: timezoneName });
   const [datePart] = tzString.split(' '); // e.g. "2026-05-21"
 
-  // Get current times in both target timezone and UTC to calculate offset
-  const localTime = new Date(now.toLocaleString('en-US', { timeZone: timezoneName }));
-  const utcTime = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
-  const offsetMs = localTime.getTime() - utcTime.getTime();
-
-  // Create midnight UTC object and subtract the timezone offset to get local midnight in UTC epoch
-  const midnightUtc = new Date(`${datePart}T00:00:00Z`);
-  return Math.floor((midnightUtc.getTime() - offsetMs) / 1000);
+  return getMidnightTimestampForDate(datePart, timezoneName);
 }
 
 /**
  * Parses natural language requests for a timeframe in Russian/English.
  * @param text 
  * @param timezoneName 
- * @returns [sinceTimestampEpoch, localized timeframe description]
+ * @returns TimeframeResult
  */
-export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow'): [number, string] {
+export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', nowOverride?: number): TimeframeResult {
   const locale = getLocale();
   text = text.toLowerCase();
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowOverride !== undefined ? nowOverride : Math.floor(Date.now() / 1000);
   const defaultSeconds = 24 * 3600;
   const defaultDesc = locale.timeframeDefault;
 
   // 1. Match numeric hours: "N часов", "N часа", "за N часов", "3ч", "3h", etc.
-  const hoursMatch = text.match(/(\d+)\s*(?:час|часа|часов|ч|hour|hours|h)/);
-  if (hoursMatch) {
-    const hours = parseInt(hoursMatch[1], 10);
-    const desc = locale.timeframeHour(hours);
-    return [now - (hours * 3600), desc];
+  const ruHoursMatch = text.match(/(?<=^|[^а-яё])(\d+)\s*(час|часа|часов|ч)(?=$|[^а-яё])/i);
+  const enHoursMatch = text.match(/\b(\d+)\s*(hour|hours|h)\b/i);
+  if (ruHoursMatch || enHoursMatch) {
+    const match = ruHoursMatch || enHoursMatch;
+    if (match) {
+      const hours = parseInt(match[1], 10);
+      const desc = locale.timeframeHour(hours);
+      return { sinceTs: now - (hours * 3600), desc };
+    }
   }
 
   // Single hour check
-  if (text.includes("час") || text.includes("hour")) {
-    return [now - 3600, locale.timeframeHourSingle];
+  const ruHourSingleMatch = /(?<=^|[^а-яё])(час|часа|часов|ч)(?=$|[^а-яё])/i.test(text);
+  const enHourSingleMatch = /\b(hour|hours|h)\b/i.test(text);
+  if (ruHourSingleMatch || enHourSingleMatch) {
+    return { sinceTs: now - 3600, desc: locale.timeframeHourSingle };
   }
 
   // 2. Match numeric minutes: "30 минут", "15 мин"
-  const minsMatch = text.match(/(\d+)\s*(?:минут|минуты|минуту|мин|m|min|minute|minutes)/);
-  if (minsMatch) {
-    const mins = parseInt(minsMatch[1], 10);
-    const desc = locale.timeframeMin(mins);
-    return [now - (mins * 60), desc];
+  const ruMinsMatch = text.match(/(?<=^|[^а-яё])(\d+)\s*(минут|минуты|минуту|мин)(?=$|[^а-яё])/i);
+  const enMinsMatch = text.match(/\b(\d+)\s*(m|min|minute|minutes)\b/i);
+  if (ruMinsMatch || enMinsMatch) {
+    const match = ruMinsMatch || enMinsMatch;
+    if (match) {
+      const mins = parseInt(match[1], 10);
+      const desc = locale.timeframeMin(mins);
+      return { sinceTs: now - (mins * 60), desc };
+    }
   }
 
-  if (text.includes("минут") || text.includes("min")) {
-    return [now - 600, locale.timeframeMinSingle];
+  // Single minutes check
+  const ruMinSingleMatch = /(?<=^|[^а-яё])(минут|минута|минуты|минуту|мин)(?=$|[^а-яё])/i.test(text);
+  const enMinSingleMatch = /\b(min|minute|minutes)\b/i.test(text);
+  if (ruMinSingleMatch || enMinSingleMatch) {
+    return { sinceTs: now - 600, desc: locale.timeframeMinSingle };
   }
 
   // 3. Today / "сегодня" (from 00:00 of the current day in target timezone)
-  if (text.includes("сегодня") || text.includes("today")) {
-    let midnightTs = getMidnightTimestamp(timezoneName);
+  const ruTodayMatch = /(?<=^|[^а-яё])(сегодня)(?=$|[^а-яё])/i.test(text);
+  const enTodayMatch = /\b(today)\b/i.test(text);
+  if (ruTodayMatch || enTodayMatch) {
+    let midnightTs = getMidnightTimestamp(timezoneName, nowOverride);
     if (midnightTs >= now) {
       midnightTs = now - defaultSeconds;
     }
-    return [midnightTs, locale.timeframeToday];
+    return { sinceTs: midnightTs, desc: locale.timeframeToday };
   }
 
   // 4. Yesterday / "вчера" (from 00:00 of yesterday in target timezone)
-  if (text.includes("вчера") || text.includes("yesterday")) {
-    const yesterdayTs = getMidnightTimestamp(timezoneName) - (24 * 3600);
-    return [yesterdayTs, locale.timeframeYesterday];
+  const ruYesterdayMatch = /(?<=^|[^а-яё])(вчера)(?=$|[^а-яё])/i.test(text);
+  const enYesterdayMatch = /\b(yesterday)\b/i.test(text);
+  if (ruYesterdayMatch || enYesterdayMatch) {
+    const todayMidnightTs = getMidnightTimestamp(timezoneName, nowOverride);
+    const yesterdayMiddayMs = (todayMidnightTs - 12 * 3600) * 1000;
+    const tzString = new Date(yesterdayMiddayMs).toLocaleString('sv-SE', { timeZone: timezoneName });
+    const [yesterdayDatePart] = tzString.split(' ');
+    const yesterdayTs = getMidnightTimestampForDate(yesterdayDatePart, timezoneName);
+    return { sinceTs: yesterdayTs, untilTs: todayMidnightTs, desc: locale.timeframeYesterday };
   }
 
   // 5. Match numeric days: "3 дня", "5 дней"
-  const daysMatch = text.match(/(\d+)\s*(?:день|дня|дней|дн|day|days\b|d\b)/);
-  if (daysMatch) {
-    const days = parseInt(daysMatch[1], 10);
-    const desc = locale.timeframeDay(days);
-    return [now - (days * 24 * 3600), desc];
+  const ruDaysMatch = text.match(/(?<=^|[^а-яё])(\d+)\s*(день|дня|дней|дн)(?=$|[^а-яё])/i);
+  const enDaysMatch = text.match(/\b(\d+)\s*(day|days|d)\b/i);
+  if (ruDaysMatch || enDaysMatch) {
+    const match = ruDaysMatch || enDaysMatch;
+    if (match) {
+      const days = parseInt(match[1], 10);
+      const desc = locale.timeframeDay(days);
+      return { sinceTs: now - (days * 24 * 3600), desc };
+    }
   }
 
-  if (text.includes("сутки") || text.includes("суток")) {
-    return [now - (24 * 3600), locale.timeframe24h];
+  // Single days checks
+  const ruSutkiMatch = /(?<=^|[^а-яё])(сутки|суток)(?=$|[^а-яё])/i.test(text);
+  if (ruSutkiMatch) {
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframe24h };
   }
-  if (text.includes("день") || text.includes("day")) {
-    return [now - (24 * 3600), locale.timeframeDaySingle];
+
+  const ruDaySingleMatch = /(?<=^|[^а-яё])(день)(?=$|[^а-яё])/i.test(text);
+  const enDaySingleMatch = /\b(day)\b/i.test(text);
+  if (ruDaySingleMatch || enDaySingleMatch) {
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframeDaySingle };
   }
 
   // 6. Week / "неделя"
-  if (text.includes("недел") || text.includes("week")) {
-    return [now - (7 * 24 * 3600), locale.timeframeWeek];
+  const ruWeekMatch = /(?<=^|[^а-яё])(неделя|неделю|недели|недель|неделе)(?=$|[^а-яё])/i.test(text);
+  const enWeekMatch = /\b(week|weeks)\b/i.test(text);
+  if (ruWeekMatch || enWeekMatch) {
+    return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek };
   }
 
-  return [now - defaultSeconds, defaultDesc];
+  return { sinceTs: now - defaultSeconds, desc: defaultDesc };
+}
+
+/**
+ * Checks if the bot is mentioned exactly in a message.
+ */
+export function isBotMentioned(message: any, botUsername: string): boolean {
+  if (!message || !botUsername) return false;
+  const text = (message.text || message.caption || "") as string;
+  if (!text) return false;
+
+  const targetMention = `@${botUsername.toLowerCase()}`;
+
+  const hasMentionEntity = message.entities && Array.isArray(message.entities) && 
+    message.entities.some((e: any) => e.type === 'mention');
+
+  if (hasMentionEntity) {
+    for (const entity of message.entities) {
+      if (entity.type === 'mention') {
+        const mentionText = text.substring(entity.offset, entity.offset + entity.length);
+        if (mentionText.toLowerCase() === targetMention) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Fallback to boundary-aware regex
+  const regex = new RegExp('@' + botUsername + '(?![A-Za-z0-9_])', 'i');
+  return regex.test(text);
 }
 
 /**
@@ -113,7 +232,7 @@ async function databaseCleanupLoop(): Promise<void> {
     const cleaned = await db.cleanupOldMessages(30);
     log("INFO", `Database cleanup: removed ${cleaned} messages older than 30 days.`);
   } catch (err) {
-    log("ERROR", "Error in database cleanup loop:", err);
+    log("ERROR", "Error in database cleanup loop:", safeErrorForLog(err));
   }
 }
 
@@ -137,7 +256,7 @@ export async function logMessage(ctx: Context): Promise<void> {
   if (text.startsWith('/')) return;
 
   const botUsername = ctx.botInfo?.username;
-  if (botUsername && text.toLowerCase().includes(`@${botUsername.toLowerCase()}`)) {
+  if (botUsername && isBotMentioned(message, botUsername)) {
     return;
   }
 
@@ -176,6 +295,8 @@ export async function logMessage(ctx: Context): Promise<void> {
   });
 }
 
+const activeLocks = new Set<number>();
+
 /**
  * Orchestrates fetching logs, invoking Gemini, and displaying the summary.
  */
@@ -192,107 +313,122 @@ async function runSummarization(ctx: Context): Promise<void> {
     replyOptions.message_thread_id = threadId;
   }
 
-
-  const rateLimitResult = isRateLimited(chatId);
-  if (rateLimitResult.limited) {
-    await ctx.reply(locale.rateLimited(rateLimitResult.retryAfter || 0), replyOptions);
+  if (activeLocks.has(chatId)) {
+    await ctx.reply(locale.summarizationInProgress, replyOptions);
     return;
   }
-
-  const text = ('text' in message ? message.text : '') || "";
-  const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
-
-  const [sinceTs, timeframeDesc] = parseTimeframe(text, tz);
-  log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Timeframe parsed: sinceTs=${sinceTs} (${timeframeDesc})`);
-
-  const statusMessage = await ctx.reply(
-    locale.gatheringMessages,
-    { ...replyOptions, parse_mode: 'HTML' }
-  );
+  activeLocks.add(chatId);
 
   try {
-    const chatMessages = await db.getMessages(chatId, sinceTs, threadId);
-    const botUsername = ctx.botInfo?.username?.toLowerCase();
-
-    // Skip bot calls/commands in logs
-    const filteredMessages = chatMessages.filter(msg => {
-      const msgText = msg.text || '';
-      if (msgText.startsWith('/')) return false;
-      if (botUsername && msgText.toLowerCase().includes(`@${botUsername}`)) return false;
-      return true;
-    });
-
-    log("INFO", `Retrieved ${chatMessages.length} total messages from DB. Filtered down to ${filteredMessages.length} messages for analysis.`);
-    if (filteredMessages.length > 0) {
-      log("DEBUG", `Analyzing ${filteredMessages.length} messages...`);
-    }
-
-    if (filteredMessages.length === 0) {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        statusMessage.message_id,
-        undefined,
-        locale.noTextMessagesForPeriod(timeframeDesc),
-        { parse_mode: 'HTML' }
-      );
+    const rateLimitResult = isRateLimited(chatId);
+    if (rateLimitResult.limited) {
+      await ctx.reply(locale.rateLimited(rateLimitResult.retryAfter || 0), replyOptions);
       return;
     }
 
-    const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
-    const summaryText = sanitizeHTML(rawSummaryText);
+    const text = ('text' in message ? message.text : '') || "";
+    const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
 
-    const maxLength = 4000;
-    if (summaryText.length > maxLength) {
-      const chunks = splitHTMLText(summaryText, maxLength);
+    let statusMessage: any = null;
 
-      // Delete status message
-      try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, statusMessage.message_id);
-      } catch (err) {
-        log("WARN", "Could not delete status message:", err);
+    try {
+      const { sinceTs, untilTs, desc: timeframeDesc } = parseTimeframe(text, tz);
+      log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Timeframe parsed: sinceTs=${sinceTs}, untilTs=${untilTs} (${timeframeDesc})`);
+
+      statusMessage = await ctx.reply(
+        locale.gatheringMessages,
+        { ...replyOptions, parse_mode: 'HTML' }
+      );
+
+      const chatMessages = await db.getMessages(chatId, sinceTs, threadId, 5000, untilTs);
+      const botUsername = ctx.botInfo?.username;
+
+      // Skip bot calls/commands in logs
+      const filteredMessages = chatMessages.filter(msg => {
+        const msgText = msg.text || '';
+        if (msgText.startsWith('/')) return false;
+        if (botUsername && isBotMentioned(msg, botUsername)) return false;
+        return true;
+      });
+
+      log("INFO", `Retrieved ${chatMessages.length} total messages from DB. Filtered down to ${filteredMessages.length} messages for analysis.`);
+      if (filteredMessages.length > 0) {
+        log("DEBUG", `Analyzing ${filteredMessages.length} messages...`);
       }
 
-      for (const chunk of chunks) {
-        try {
-          await ctx.reply(chunk, { ...replyOptions, parse_mode: 'HTML' });
-        } catch (err) {
-          log("WARN", "HTML error, falling back to plain text:", err);
-          await ctx.reply(chunk, replyOptions);
-        }
-      }
-    } else {
-      try {
+      if (filteredMessages.length === 0) {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           statusMessage.message_id,
           undefined,
-          summaryText,
+          locale.noTextMessagesForPeriod(timeframeDesc),
           { parse_mode: 'HTML' }
         );
-      } catch (err) {
-        log("WARN", "HTML error, falling back to plain text:", err);
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          statusMessage.message_id,
-          undefined,
-          summaryText
-        );
+        return;
+      }
+
+      const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
+      const summaryText = sanitizeHTML(rawSummaryText);
+
+      const maxLength = 4000;
+      if (summaryText.length > maxLength) {
+        const chunks = splitHTMLText(summaryText, maxLength);
+
+        // Delete status message
+        try {
+          await ctx.telegram.deleteMessage(ctx.chat.id, statusMessage.message_id);
+        } catch (err) {
+          log("WARN", "Could not delete status message:", safeErrorForLog(err));
+        }
+
+        for (const chunk of chunks) {
+          try {
+            await ctx.reply(chunk, { ...replyOptions, parse_mode: 'HTML' });
+          } catch (err) {
+            log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+            await ctx.reply(chunk, replyOptions);
+          }
+        }
+      } else {
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            summaryText,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            summaryText
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log("ERROR", "Error during summarization execution:", safeErrorForLog(err));
+      try {
+        if (statusMessage) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            locale.failedToGenerateWithError(escapeHTML(errMsg)),
+            { parse_mode: 'HTML' }
+          );
+        } else {
+          await ctx.reply(locale.failedToGenerateWithError(escapeHTML(errMsg)), { ...replyOptions, parse_mode: 'HTML' });
+        }
+      } catch (editErr) {
+        log("ERROR", "Could not send/update error message to user:", safeErrorForLog(editErr));
       }
     }
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log("ERROR", "Error during summarization execution:", errMsg);
-    try {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        statusMessage.message_id,
-        undefined,
-        locale.failedToGenerateWithError(escapeHTML(errMsg)),
-        { parse_mode: 'HTML' }
-      );
-    } catch (editErr) {
-      log("ERROR", "Could not update status message with error detail:", editErr);
-    }
+  } finally {
+    activeLocks.delete(chatId);
   }
 }
 
@@ -307,7 +443,7 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
   const text = message.text;
   const botUsername = ctx.botInfo?.username;
   const isPrivate = ctx.chat.type === 'private';
-  const isMentioned = botUsername && text.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+  const isMentioned = botUsername && isBotMentioned(message, botUsername);
 
   if (isPrivate || isMentioned) {
     // In group chats, a @mention always triggers summarization (that's the bot's purpose).
@@ -334,6 +470,15 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
 /**
  * Initialize and start the Telegram Bot.
  */
+/**
+ * Checks fail-closed mode on startup and logs a warning if misconfigured.
+ */
+export function checkFailClosedMode(): void {
+  if (!process.env.ALLOWED_CHATS && process.env.ALLOW_ALL_CHATS !== 'true') {
+    log("WARN", "WARNING: Bot is running in fail-closed mode. No chats are authorized. Please configure ALLOWED_CHATS or ALLOW_ALL_CHATS=true.");
+  }
+}
+
 async function startBot(): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -341,10 +486,20 @@ async function startBot(): Promise<void> {
     process.exit(1);
   }
 
+  if (process.env.DEFAULT_TIMEZONE) {
+    if (!validateTimezone(process.env.DEFAULT_TIMEZONE)) {
+      log("WARN", `Invalid timezone configured in DEFAULT_TIMEZONE: ${process.env.DEFAULT_TIMEZONE}. Falling back to UTC.`);
+      process.env.DEFAULT_TIMEZONE = 'UTC';
+    }
+  }
+
+  // Check fail-closed mode on startup
+  checkFailClosedMode();
+
   log("INFO", "Initializing SQLite database...");
   const rawDbPath = process.env.DB_PATH || 'data/bot_messages.db';
   const dbPath = path.resolve(rawDbPath);
-  // SEC-6: Validate DB_PATH doesn't contain path traversal
+  // Validate DB_PATH doesn't contain path traversal
   if (rawDbPath.includes('..')) {
     log("FATAL", `DB_PATH contains path traversal ('..') and is rejected: ${rawDbPath}`);
     process.exit(1);
@@ -366,12 +521,12 @@ async function startBot(): Promise<void> {
       }
       await logMessage(ctx);
     } catch (err) {
-      log("ERROR", "Error logging message:", err);
+      log("ERROR", "Error logging message:", safeErrorForLog(err));
     }
     return next();
   });
 
-  // NEW-1: Authorization middleware — blocks all interactive responses for unauthorized chats
+  // Authorization middleware — blocks all interactive responses for unauthorized chats
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (chatId !== undefined && !isChatAuthorized(chatId)) {
@@ -386,7 +541,7 @@ async function startBot(): Promise<void> {
     try {
       await handleBotMentionOrPrivate(ctx);
     } catch (err) {
-      log("ERROR", "Error handling potential summarization trigger:", err);
+      log("ERROR", "Error handling potential summarization trigger:", safeErrorForLog(err));
     }
   });
 
@@ -404,7 +559,7 @@ async function startBot(): Promise<void> {
     allowedUpdates: ['message', 'edited_message']
   });
 
-  // Configure graceful shutdown (SEC-9: clear interval)
+  // Configure graceful shutdown (clear interval)
   process.once('SIGINT', () => { clearInterval(cleanupInterval); bot.stop('SIGINT'); });
   process.once('SIGTERM', () => { clearInterval(cleanupInterval); bot.stop('SIGTERM'); });
 }
@@ -415,7 +570,7 @@ const currentPath = fileURLToPath(import.meta.url);
 
 if (nodePath && path.resolve(nodePath) === path.resolve(currentPath)) {
   startBot().catch(err => {
-    log("FATAL", "Failed to run bot app launcher:", err);
+    log("FATAL", "Failed to run bot app launcher:", safeErrorForLog(err));
     process.exit(1);
   });
 }

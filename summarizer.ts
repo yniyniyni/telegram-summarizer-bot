@@ -97,9 +97,104 @@ export function buildBoundedTranscript(
   timezoneName = 'Europe/Moscow',
   maxChars = MAX_TRANSCRIPT_CHARS
 ): BoundedTranscript {
-  const formattedLines = messages
-    .map((msg) => formatMessageLine(msg, timezoneName))
-    .filter((line): line is string => Boolean(line));
+  const isRedact = process.env.REDACT_USER_IDENTITIES === 'true';
+
+  let formattedLines: string[] = [];
+
+  if (isRedact) {
+    const userIdToPseudonym = new Map<number, string>();
+    let userCount = 0;
+
+    interface Target {
+      regex: RegExp;
+      pseudonym: string;
+      length: number;
+    }
+    const targets: Target[] = [];
+
+    const buildTargetRegex = (target: string, pseudonym: string): Target => {
+      const isMention = target.startsWith('@');
+      const cleanTarget = isMention ? target.slice(1) : target;
+      const escaped = cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const hasCyrillic = /[а-яёА-ЯЁ]/.test(cleanTarget);
+
+      let regex: RegExp;
+      if (isMention) {
+        regex = new RegExp(`(?<![A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_])`, 'gi');
+      } else if (hasCyrillic) {
+        const pattern = `(?<=^|[^а-яё])${escaped}(?=$|[^а-яё])`;
+        regex = new RegExp(pattern, 'gi');
+      } else {
+        const pattern = `\\b${escaped}\\b`;
+        regex = new RegExp(pattern, 'gi');
+      }
+      return { regex, pseudonym, length: target.length };
+    };
+
+    // First pass: assign pseudonyms and collect targets
+    for (const msg of messages) {
+      if (msg.user_id === undefined || msg.user_id === null) continue;
+      if (!userIdToPseudonym.has(msg.user_id)) {
+        userCount++;
+        const pseudonym = `User ${userCount}`;
+        userIdToPseudonym.set(msg.user_id, pseudonym);
+
+        const first = (msg.first_name || '').trim();
+        const last = (msg.last_name || '').trim();
+        const username = (msg.username || '').trim();
+
+        if (first && last) {
+          const fullName = `${first} ${last}`;
+          if (fullName.length > 2) {
+            targets.push(buildTargetRegex(fullName, pseudonym));
+          }
+        }
+        if (first && first !== 'Anonymous' && first !== 'Без имени') {
+          if (first.length > 2) {
+            targets.push(buildTargetRegex(first, pseudonym));
+          }
+        }
+        if (last) {
+          if (last.length > 2) {
+            targets.push(buildTargetRegex(last, pseudonym));
+          }
+        }
+        if (username) {
+          targets.push(buildTargetRegex(`@${username}`, pseudonym));
+          targets.push(buildTargetRegex(username, pseudonym));
+        }
+      }
+    }
+
+    // Sort targets by length descending
+    targets.sort((a, b) => b.length - a.length);
+
+    // Second pass: format and redact
+    formattedLines = messages
+      .map((msg) => {
+        const text = (msg.text || '').trim();
+        if (!text) return null;
+
+        let redactedText = text;
+        for (const target of targets) {
+          redactedText = redactedText.replace(target.regex, target.pseudonym);
+        }
+
+        // Redact any remaining usernames
+        redactedText = redactedText.replace(/@\w+/g, '@user_redacted');
+
+        const timeStr = formatTimestamp(msg.timestamp, timezoneName);
+        const pseudonym = userIdToPseudonym.get(msg.user_id) || 'User Unknown';
+
+        return `[${timeStr}] ${pseudonym}: ${redactedText}`;
+      })
+      .filter((line): line is string => Boolean(line));
+
+  } else {
+    formattedLines = messages
+      .map((msg) => formatMessageLine(msg, timezoneName))
+      .filter((line): line is string => Boolean(line));
+  }
 
   if (formattedLines.length === 0 || maxChars <= 0) {
     return {

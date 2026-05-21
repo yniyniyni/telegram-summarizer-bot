@@ -11,7 +11,7 @@ An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` fram
 *   **Real-time logging**: The bot tracks and logs text messages and media captions into a local SQLite database.
 *   **Edit synchronization**: Automatically updates message content in the database if a user edits their message in Telegram.
 *   **Memory safe**: A background cron job cleans up messages older than 30 days once a day.
-*   **Markup protection**: If Gemini returns invalid Markdown, the bot automatically falls back to plain text mode to avoid Telegram API formatting errors.
+*   **Markup protection**: If Gemini returns invalid HTML, the bot automatically falls back to plain text mode to avoid Telegram API formatting errors.
 *   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
 
 ---
@@ -34,12 +34,15 @@ By default, Telegram bots cannot read group messages unless they are directly me
 Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.com/).
 
 ### 4. Advanced Configuration (Optional)
-You can configure rate limits and whitelist specific chat IDs in your `.env` file to protect your Gemini API quota:
+You can configure rate limits, privacy modes, and whitelist specific chat IDs in your `.env` file to protect your Gemini API quota:
 *   **Rate Limiting**:
     *   `RATE_LIMIT_MAX_REQUESTS`: Set the maximum number of summarization requests allowed per chat in the window. Disabled if unset or set to `0`.
     *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour).
-*   **Chat Authorization Whitelist**:
-    *   `ALLOWED_CHATS`: A comma-separated list of numeric chat IDs allowed to use the bot (e.g., `-100123456789,-100987654321,12345678`). If unset or empty, authorization is disabled and anyone can use the bot.
+*   **Chat ID Authorization**:
+    *   `ALLOWED_CHATS`: A comma-separated list of numeric chat IDs allowed to use the bot (e.g., `-100123456789,-100987654321,12345678`).
+    *   `ALLOW_ALL_CHATS`: Set to `true` to explicitly disable authorization checks and allow all chats. By default, authorization operates in a **fail-closed** mode: if `ALLOW_ALL_CHATS` is not `true` and `ALLOWED_CHATS` is empty or unset, all chats will be unauthorized by default.
+*   **PII Minimization**:
+    *   `REDACT_USER_IDENTITIES`: Set to `true` to enable user identity redaction in transcripts. In this mode, real names and usernames in message headers and bodies are replaced with stable pseudonyms (e.g., `User 1`, `User 2`), and any other username mentions are replaced with `@user_redacted`.
 
 ---
 
@@ -48,7 +51,7 @@ You can configure rate limits and whitelist specific chat IDs in your `.env` fil
 For a detailed deployment guide on Linux servers (Debian/Ubuntu and Alma/Rocky Linux), please refer to the [Deployment Guide](docs/deployment.md).
 
 ### Prerequisites
-*   Node.js v18.0.0 or higher (tested on Node.js v22)
+*   Node.js v20.17.0 or higher (tested on Node.js v22)
 
 ### Installation Steps
 
@@ -68,6 +71,8 @@ For a detailed deployment guide on Linux servers (Debian/Ubuntu and Alma/Rocky L
     DB_PATH=data/bot_messages.db
     DEFAULT_TIMEZONE=Europe/Moscow
     BOT_LANGUAGE=en
+    ALLOW_ALL_CHATS=true
+    REDACT_USER_IDENTITIES=false
     ```
 
 ### Testing Functionality

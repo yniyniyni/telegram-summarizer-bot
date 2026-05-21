@@ -6,7 +6,7 @@ This guide provides step-by-step instructions for deploying the Telegram Gemini 
 
 ## 📋 Prerequisites
 
-### 1. Install Node.js (v18+)
+### 1. Install Node.js (v20.17.0+)
 
 We recommend installing Node.js v20 LTS.
 
@@ -68,9 +68,16 @@ Fill in the configuration details:
 TELEGRAM_BOT_TOKEN=your_real_telegram_bot_token
 GEMINI_API_KEY=your_real_gemini_api_key
 DB_PATH=/opt/telegram-gemini-bot/data/bot_messages.db
+# Timezone for date formatting in prompts. If invalid, the bot logs a warning on startup and falls back to UTC.
 DEFAULT_TIMEZONE=Europe/Moscow
 BOT_LANGUAGE=en
-# Optionally set ALLOWED_CHATS and RATE_LIMIT_MAX_REQUESTS
+# Security settings: By default, no chats are authorized (fail-closed).
+# Set ALLOW_ALL_CHATS=true to bypass authorization, or set ALLOWED_CHATS.
+ALLOW_ALL_CHATS=true
+# ALLOWED_CHATS=-100123456789
+# Optionally set RATE_LIMIT_MAX_REQUESTS
+# PII Minimization Mode: Set REDACT_USER_IDENTITIES=true to replace real names/usernames with pseudonyms
+REDACT_USER_IDENTITIES=false
 ```
 
 ### 3. Build the Application

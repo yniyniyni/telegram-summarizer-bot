@@ -4,11 +4,16 @@
   "description": "Telegram bot for chat summarization using Gemini 3.1 Flash Lite and SQLite written in TypeScript.",
   "license": "MIT",
   "type": "module",
-  "main": "main.ts",
+  "main": "dist/main.js",
+  "private": true,
+  "engines": {
+    "node": ">=20.17.0"
+  },
   "scripts": {
     "start": "tsx main.ts",
     "start:debug": "DEBUG=true tsx main.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "test:db": "tsx test_db.ts",
     "test:main": "tsx test_main.ts",
     "test:parser": "tsx test_parser.ts",
@@ -16,6 +21,12 @@
     "test:summarizer": "tsx test_summarizer.ts",
     "test": "tsx test_db.ts && tsx test_main.ts && tsx test_parser.ts && tsx test_utils.ts && tsx test_summarizer.ts"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
   "dependencies": {
     "@google/genai": "^2.5.0",
     "dotenv": "^16.4.5",
@@ -29,3 +40,4 @@
     "typescript": "^5.4.5"
   }
 }
+

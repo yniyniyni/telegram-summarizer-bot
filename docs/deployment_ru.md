@@ -6,7 +6,7 @@
 
 ## 📋 Предварительные требования
 
-### 1. Установка Node.js (v18+)
+### 1. Установка Node.js (v20.17.0+)
 
 Мы рекомендуем устанавливать Node.js версии v20 LTS.
 
@@ -68,9 +68,16 @@ nano .env
 TELEGRAM_BOT_TOKEN=ваш_токен_телеграм_бота
 GEMINI_API_KEY=ваш_ключ_gemini_api
 DB_PATH=/opt/telegram-gemini-bot/data/bot_messages.db
+# Временная зона для форматирования дат в промптах. Если указана некорректная зона, бот запишет предупреждение в лог при запуске и переключится на UTC.
 DEFAULT_TIMEZONE=Europe/Moscow
 BOT_LANGUAGE=ru
-# Опционально настройте ALLOWED_CHATS и RATE_LIMIT_MAX_REQUESTS
+# Настройки безопасности: по умолчанию чаты не авторизованы (fail-closed).
+# Установите ALLOW_ALL_CHATS=true для отключения проверок, либо задайте ALLOWED_CHATS.
+ALLOW_ALL_CHATS=true
+# ALLOWED_CHATS=-100123456789
+# Опционально настройте RATE_LIMIT_MAX_REQUESTS
+# Режим минимизации PII: Установите REDACT_USER_IDENTITIES=true для замены реальных имен/юзернеймов псевдонимами
+REDACT_USER_IDENTITIES=false
 ```
 
 ### 3. Сборка проекта

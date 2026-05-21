@@ -48,7 +48,7 @@ export async function initDb(): Promise<void> {
 
   const dirName = path.dirname(dbPath);
   if (dirName && !fs.existsSync(dirName)) {
-    fs.mkdirSync(dirName, { recursive: true });
+    fs.mkdirSync(dirName, { recursive: true, mode: 0o700 });
   }
 
   initPromise = (async () => {
@@ -56,6 +56,14 @@ export async function initDb(): Promise<void> {
       filename: dbPath,
       driver: sqlite3.Database
     });
+
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(dbPath, 0o600);
+      } catch (error) {
+        console.warn(`Warning: Failed to set SQLite database file permissions: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
 
     await instance.exec(`
       CREATE TABLE IF NOT EXISTS messages (
@@ -122,34 +130,77 @@ export async function getMessages(
   chatId: number, 
   sinceTimestamp: number, 
   threadId: number | null = null,
-  limit = 5000
+  limit = 5000,
+  untilTimestamp?: number
 ): Promise<SavedMessage[]> {
   if (!dbInstance) {
     throw new Error("Database not initialized. Call initDb() first.");
   }
 
-  let query = `
+  let subquery = `
     SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
     FROM messages
     WHERE chat_id = ? AND timestamp >= ?
   `;
   const params: (number | null)[] = [chatId, sinceTimestamp];
 
-  if (threadId !== null && threadId !== undefined) {
-    query += " AND thread_id = ?";
-    params.push(threadId);
-  } else {
-    query += " AND thread_id IS NULL";
+  if (untilTimestamp !== undefined) {
+    subquery += " AND timestamp < ?";
+    params.push(untilTimestamp);
   }
 
-  query += `
-    ORDER BY timestamp ASC
+  if (threadId !== null && threadId !== undefined) {
+    subquery += " AND thread_id = ?";
+    params.push(threadId);
+  } else {
+    subquery += " AND thread_id IS NULL";
+  }
+
+  subquery += `
+    ORDER BY timestamp DESC, message_id DESC
     LIMIT ?
   `;
   params.push(limit);
 
+  const query = `
+    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
+    FROM (${subquery})
+    ORDER BY timestamp ASC, message_id ASC
+  `;
+
   const rows = await dbInstance.all<SavedMessage[]>(query, params);
   return rows || [];
+}
+
+
+/**
+ * Begin a database transaction.
+ */
+export async function beginTransaction(): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run("BEGIN TRANSACTION");
+}
+
+/**
+ * Commit a database transaction.
+ */
+export async function commitTransaction(): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run("COMMIT");
+}
+
+/**
+ * Rollback a database transaction.
+ */
+export async function rollbackTransaction(): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run("ROLLBACK");
 }
 
 /**

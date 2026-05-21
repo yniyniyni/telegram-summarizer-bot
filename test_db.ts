@@ -20,6 +20,16 @@ async function runTests(): Promise<void> {
     await db.initDb();
     assert.ok(fs.existsSync(testDbPath), "Test DB file should exist after initialization");
 
+    if (process.platform !== 'win32') {
+      console.log("Testing database file permissions...");
+      const actualMode = fs.statSync(testDbPath).mode & 0o777;
+      assert.strictEqual(
+        actualMode,
+        0o600,
+        `Expected database file permissions to be 0o600, but got ${actualMode.toString(8)}`
+      );
+    }
+
     // 1b. Test concurrent DB initialization
     console.log("Testing concurrent DB initialization...");
     await db.closeDb();
@@ -56,6 +66,34 @@ async function runTests(): Promise<void> {
     assert.strictEqual(messages[0].text, "Hello world!", "Message text mismatch");
     assert.strictEqual(messages[0].first_name, "Test", "Sender first name mismatch");
     assert.strictEqual(messages[0].username, "testuser", "Username mismatch");
+
+    // 3b. Test getMessages with untilTimestamp (bounded range)
+    console.log("Testing getMessages with untilTimestamp...");
+    await db.saveMessage({
+      chat_id: 9999,
+      message_id: 1,
+      user_id: 789,
+      username: "testuser",
+      first_name: "Test",
+      last_name: "User",
+      text: "Past message",
+      timestamp: now,
+      thread_id: null
+    });
+    await db.saveMessage({
+      chat_id: 9999,
+      message_id: 2,
+      user_id: 789,
+      username: "testuser",
+      first_name: "Test",
+      last_name: "User",
+      text: "Future message",
+      timestamp: now + 5,
+      thread_id: null
+    });
+    let boundedMessages = await db.getMessages(9999, now - 10, null, 5000, now + 2);
+    assert.strictEqual(boundedMessages.length, 1, "Should retrieve only 1 message before untilTimestamp");
+    assert.strictEqual(boundedMessages[0].text, "Past message", "Should retrieve correct message");
 
     // 4. Test message update (Telegram message edit)
     console.log("Testing message update (upsert)...");
@@ -125,6 +163,50 @@ async function runTests(): Promise<void> {
     messages = await db.getMessages(123, oldTime - 10);
     assert.strictEqual(messages.length, 1, "Only 1 message should remain after purge");
     assert.strictEqual(messages[0].text, "Hello world! (edited)", "Wrong message was purged");
+
+    // 6. Test latest limit messages returning latest messages in chronological order (ascending)
+    console.log("Testing latest messages limit (6000 messages)...");
+    const limitChatId = 777;
+    const limitTimestampBase = now - 20000;
+    
+    await db.beginTransaction();
+    try {
+      for (let i = 1; i <= 6000; i++) {
+        await db.saveMessage({
+          chat_id: limitChatId,
+          message_id: i,
+          user_id: 111,
+          username: `user_${i}`,
+          first_name: "Test",
+          last_name: "User",
+          text: `Message ${i}`,
+          timestamp: limitTimestampBase + i,
+          thread_id: null
+        });
+      }
+      await db.commitTransaction();
+    } catch (err) {
+      await db.rollbackTransaction();
+      throw err;
+    }
+
+    const latestMessages = await db.getMessages(limitChatId, limitTimestampBase - 10, null);
+    assert.strictEqual(latestMessages.length, 5000, "Should return exactly 5000 messages (default limit)");
+    
+    // Check that message_id=6000 is included (it should be the last message)
+    assert.ok(latestMessages.some(m => m.message_id === 6000), "Should contain message_id=6000");
+    // Check that message_id=1 is NOT included
+    assert.ok(!latestMessages.some(m => m.message_id === 1), "Should not contain message_id=1");
+
+    // Let's assert chronological order
+    assert.strictEqual(latestMessages[0].message_id, 1001, "First returned message should be message_id=1001");
+    assert.strictEqual(latestMessages[4999].message_id, 6000, "Last returned message should be message_id=6000");
+
+    // Double check chronological order for adjacent messages
+    for (let i = 0; i < latestMessages.length - 1; i++) {
+      assert.ok(latestMessages[i].timestamp < latestMessages[i + 1].timestamp, `Timestamp at index ${i} should be less than next`);
+      assert.strictEqual(latestMessages[i].message_id + 1, latestMessages[i + 1].message_id, `Message ID sequence broken at index ${i}`);
+    }
 
     console.log("✅ Database verification tests passed successfully!");
   } finally {
