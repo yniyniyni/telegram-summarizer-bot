@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { SavedMessage } from './db.js';
 import { getLocale } from './locales.js';
-import { escapeHTML } from './utils.js';
+import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
 
@@ -49,7 +49,7 @@ export function formatTimestamp(timestamp: number, timezone: string): string {
     
     return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
   } catch (err: unknown) {
-    console.error(`Error formatting timestamp ${timestamp} for timezone ${timezone}:`, err instanceof Error ? err.message : String(err));
+    log("ERROR", `Error formatting timestamp ${timestamp} for timezone ${timezone}: ${err instanceof Error ? err.message : String(err)}`);
     // Fallback to UTC ISO string representation
     return new Date(timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19);
   }
@@ -100,9 +100,9 @@ export async function summarizeMessages(
   try {
     const aiClient = getAIClient();
     
-    console.log("==================== [GEMINI API REQUEST] ====================");
-    console.log(`Model: gemini-3.1-flash-lite`);
-    console.log("=============================================================");
+    log("DEBUG", "==================== [GEMINI API REQUEST] ====================");
+    log("DEBUG", `Model: gemini-3.1-flash-lite`);
+    log("DEBUG", "=============================================================");
 
     const response = await aiClient.models.generateContent({
       model: 'gemini-3.1-flash-lite',
@@ -116,7 +116,7 @@ export async function summarizeMessages(
     return response.text || locale.failedToGenerate;
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error("Error calling Gemini API:", errMsg);
+    log("ERROR", `Error calling Gemini API: ${errMsg}`);
     return locale.geminiError(escapeHTML(errMsg));
   }
 }

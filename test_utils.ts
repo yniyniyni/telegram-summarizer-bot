@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, resetRateLimits, splitHTMLText } from './utils.js';
+import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, resetRateLimits, splitHTMLText, log } from './utils.js';
 
 function runTests(): void {
   console.log("Starting utility tests...");
@@ -136,6 +136,54 @@ function runTests(): void {
   ]);
 
   console.log("  Passed splitHTMLText tests.");
+
+  // 6. Test log helper (DEBUG logging filtering)
+  console.log("Testing log helper...");
+  const originalConsoleLog = console.log;
+  let loggedMessages: string[] = [];
+  console.log = (...args: any[]) => {
+    loggedMessages.push(args.join(" "));
+  };
+
+  try {
+    // With DEBUG disabled by default
+    delete process.env.DEBUG;
+    delete process.env.LOG_LEVEL;
+    log("INFO", "Info message test");
+    log("DEBUG", "Debug message test");
+
+    assert.ok(loggedMessages.some(msg => msg.includes("[INFO] Info message test")), "INFO message should be logged");
+    assert.ok(!loggedMessages.some(msg => msg.includes("[DEBUG] Debug message test")), "DEBUG message should NOT be logged by default");
+
+    // Clear buffer
+    loggedMessages = [];
+
+    // With DEBUG enabled
+    process.env.DEBUG = "true";
+    log("INFO", "Second info message test");
+    log("DEBUG", "Second debug message test");
+
+    assert.ok(loggedMessages.some(msg => msg.includes("[INFO] Second info message test")), "INFO message should be logged when DEBUG is true");
+    assert.ok(loggedMessages.some(msg => msg.includes("[DEBUG] Second debug message test")), "DEBUG message should be logged when DEBUG is true");
+
+    // Clear buffer
+    loggedMessages = [];
+
+    // With LOG_LEVEL=debug
+    delete process.env.DEBUG;
+    process.env.LOG_LEVEL = "debug";
+    log("DEBUG", "Third debug message test");
+
+    assert.ok(loggedMessages.some(msg => msg.includes("[DEBUG] Third debug message test")), "DEBUG message should be logged when LOG_LEVEL is debug");
+
+  } finally {
+    // Restore console.log and clean up env vars
+    console.log = originalConsoleLog;
+    delete process.env.DEBUG;
+    delete process.env.LOG_LEVEL;
+  }
+  console.log("  Passed log helper tests.");
+
   console.log("✅ All utility tests passed successfully!");
 }
 

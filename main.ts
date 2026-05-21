@@ -5,13 +5,7 @@ import { Telegraf, Context } from 'telegraf';
 import * as db from './db.js';
 import * as summarizer from './summarizer.js';
 import { getLocale } from './locales.js';
-import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText } from './utils.js';
-
-// Setup basic logger
-function log(level: string, message: string, ...args: unknown[]): void {
-  const ts = new Date().toISOString();
-  console.log(`[${ts}] [${level}] ${message}`, ...args);
-}
+import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText, log } from './utils.js';
 
 /**
  * Calculates the local midnight epoch timestamp in a specific timezone.

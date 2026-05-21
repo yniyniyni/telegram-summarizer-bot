@@ -7,6 +7,7 @@
   "main": "main.ts",
   "scripts": {
     "start": "tsx main.ts",
+    "start:debug": "DEBUG=true tsx main.ts",
     "build": "tsc",
     "test:db": "tsx test_db.ts",
     "test:parser": "tsx test_parser.ts",

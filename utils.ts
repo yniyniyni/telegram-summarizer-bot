@@ -268,3 +268,19 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
 
   return chunks;
 }
+
+/**
+ * Standard log function that filters out DEBUG messages unless debug mode is enabled.
+ * Debug mode is enabled via environment variables: DEBUG=true/1 or LOG_LEVEL=debug.
+ */
+export function log(level: string, message: string, ...args: unknown[]): void {
+  if (level.toUpperCase() === 'DEBUG') {
+    const isDebugMode = process.env.DEBUG === 'true' || process.env.DEBUG === '1' || process.env.LOG_LEVEL?.toLowerCase() === 'debug';
+    if (!isDebugMode) {
+      return;
+    }
+  }
+  const ts = new Date().toISOString();
+  console.log(`[${ts}] [${level}] ${message}`, ...args);
+}
+
