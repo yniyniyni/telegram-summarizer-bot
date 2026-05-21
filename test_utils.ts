@@ -64,9 +64,13 @@ function runTests(): void {
   assert.strictEqual(isChatAuthorized(999), false);
   assert.strictEqual(isChatAuthorized(-100123), false);
 
-  // Empty whitelist defaults to allowed
+  // Empty whitelist defaults to deny all if env var is defined
   process.env.ALLOWED_CHATS = "";
-  assert.strictEqual(isChatAuthorized(123), true);
+  assert.strictEqual(isChatAuthorized(123), false);
+
+  // Invalid whitelist defaults to deny all
+  process.env.ALLOWED_CHATS = "abc, def";
+  assert.strictEqual(isChatAuthorized(123), false);
   console.log("  Passed isChatAuthorized tests.");
 
   // 4. Test isRateLimited

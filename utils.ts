@@ -120,17 +120,27 @@ let cachedAllowedChatsRaw: string | undefined = undefined;
 
 export function isChatAuthorized(chatId: number): boolean {
   const raw = process.env.ALLOWED_CHATS;
-  if (!raw) return true; // Authorization disabled (any chat allowed)
 
-  // Re-parse only if the env value changed
-  if (raw !== cachedAllowedChatsRaw) {
+  // Re-parse only if the env value changed and raw is defined
+  if (raw !== undefined && raw !== cachedAllowedChatsRaw) {
     cachedAllowedChatsRaw = raw;
     cachedAllowedChats = new Set(
-      raw.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n))
+      raw.split(',')
+        .map(s => s.trim())
+        .filter(s => s !== '')
+        .map(s => Number(s))
+        .filter(n => !isNaN(n))
     );
   }
 
-  return cachedAllowedChats!.size === 0 || cachedAllowedChats!.has(chatId);
+  // The ALLOWED_CHATS env var is stored in the 'raw' variable.
+  // We check whether the ALLOWED_CHATS env var is not set (raw is undefined).
+  // If it is not set, we treat it as no restriction and allow (return true).
+  // If raw is present/defined but parsed into an empty cachedAllowedChats (size 0), we fail closed and return false.
+  // Otherwise, we check cachedAllowedChats.has(chatId).
+  return raw === undefined
+    ? true
+    : (cachedAllowedChats!.size === 0 ? false : cachedAllowedChats!.has(chatId));
 }
 
 /**
