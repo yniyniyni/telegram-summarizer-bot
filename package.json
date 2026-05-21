@@ -1,0 +1,26 @@
+{
+  "name": "telegram-gemini-summarizer-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for chat summarization using Gemini 3.1 Flash Lite and SQLite written in TypeScript.",
+  "type": "module",
+  "main": "main.ts",
+  "scripts": {
+    "start": "tsx main.ts",
+    "build": "tsc",
+    "test:db": "tsx test_db.ts",
+    "test:parser": "tsx test_parser.ts",
+    "test": "tsx test_db.ts && tsx test_parser.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.5.0",
+    "dotenv": "^16.4.5",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "telegraf": "^4.16.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.19.2",
+    "@types/node": "^20.12.12"
+  }
+}
