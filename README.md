@@ -11,8 +11,10 @@ An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` fram
 *   **Real-time logging**: The bot tracks and logs text messages and media captions into a local SQLite database.
 *   **Edit synchronization**: Automatically updates message content in the database if a user edits their message in Telegram.
 *   **Memory safe**: A background cron job cleans up messages older than 30 days once a day.
-*   **Markup protection**: If Gemini returns invalid HTML, the bot automatically falls back to plain text mode to avoid Telegram API formatting errors.
+*   **Secure database permissions**: Creates the SQLite database directory with mode `0700` when missing and sets the database file itself to mode `0600` on Linux/macOS.
+*   **Markup protection**: Sanitizes Gemini output for Telegram HTML, converts basic Markdown formatting, and falls back to plain text if Telegram still rejects the markup.
 *   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
+*   **Private chat support**: In private chats, trigger keywords start summarization; other messages receive a short welcome/help response.
 
 ---
 
@@ -36,13 +38,19 @@ Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.co
 ### 4. Advanced Configuration (Optional)
 You can configure rate limits, privacy modes, and whitelist specific chat IDs in your `.env` file to protect your Gemini API quota:
 *   **Rate Limiting**:
-    *   `RATE_LIMIT_MAX_REQUESTS`: Set the maximum number of summarization requests allowed per chat in the window. Disabled if unset or set to `0`.
-    *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour).
+    *   `RATE_LIMIT_MAX_REQUESTS`: Set the maximum number of summarization requests allowed per chat in the window. Disabled if unset or set to `0`; invalid or negative values fail closed and block requests temporarily.
+    *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour; invalid values fall back to `3600`).
 *   **Chat ID Authorization**:
     *   `ALLOWED_CHATS`: A comma-separated list of numeric chat IDs allowed to use the bot (e.g., `-100123456789,-100987654321,12345678`).
     *   `ALLOW_ALL_CHATS`: Set to `true` to explicitly disable authorization checks and allow all chats. By default, authorization operates in a **fail-closed** mode: if `ALLOW_ALL_CHATS` is not `true` and `ALLOWED_CHATS` is empty or unset, all chats will be unauthorized by default.
 *   **PII Minimization**:
     *   `REDACT_USER_IDENTITIES`: Set to `true` to enable user identity redaction in transcripts. In this mode, real names and usernames in message headers and bodies are replaced with stable pseudonyms (e.g., `User 1`, `User 2`), and any other username mentions are replaced with `@user_redacted`.
+*   **Logging**:
+    *   `DEBUG=true`, `DEBUG=1`, or `LOG_LEVEL=debug`: Enables debug logs. Non-debug logs are always printed.
+*   **Database path**:
+    *   `DB_PATH`: Defaults to `data/bot_messages.db`. Values containing `..` are rejected on startup.
+*   **Gemini API key**:
+    *   `GEMINI_API_KEY`: Primary API key variable. `GOOGLE_API_KEY` is also accepted as a fallback.
 
 ---
 
@@ -76,16 +84,17 @@ For a detailed deployment guide on Linux servers (Debian/Ubuntu and Alma/Rocky L
     ```
 
 ### Testing Functionality
-You can run the built-in database and time parser tests before starting the bot:
+You can run the full built-in test suite before starting the bot:
 ```bash
 npm test
 ```
-Or separately:
+It runs database, main handler, timeframe parser, utility, and summarizer tests. You can also run individual suites:
 ```bash
 npm run test:db
-```
-```bash
+npm run test:main
 npm run test:parser
+npm run test:utils
+npm run test:summarizer
 ```
 
 ### Building the Project (TypeScript compilation)
@@ -120,6 +129,8 @@ node dist/main.js
     *   `@bot_username summarize last 30 minutes` (Russian queries like `суммаризуй за последний час` are also supported)
 
 *Note: If the time period cannot be parsed, the bot defaults to summarizing the last 24 hours.*
+
+In private chats, send a trigger phrase such as `summarize the last hour` or `суммаризуй за час` to summarize messages visible in that private chat.
 
 ## License
 

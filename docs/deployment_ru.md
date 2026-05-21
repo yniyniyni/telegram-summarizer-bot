@@ -67,15 +67,22 @@ nano .env
 ```ini
 TELEGRAM_BOT_TOKEN=ваш_токен_телеграм_бота
 GEMINI_API_KEY=ваш_ключ_gemini_api
+# GOOGLE_API_KEY=ваш_ключ_google_api
 DB_PATH=/opt/telegram-gemini-bot/data/bot_messages.db
+# Значения DB_PATH с '..' отклоняются при запуске.
 # Временная зона для форматирования дат в промптах. Если указана некорректная зона, бот запишет предупреждение в лог при запуске и переключится на UTC.
 DEFAULT_TIMEZONE=Europe/Moscow
 BOT_LANGUAGE=ru
+# DEBUG-логи по умолчанию выключены. Используйте DEBUG=true/1 или LOG_LEVEL=debug, чтобы их включить.
+# DEBUG=true
+# LOG_LEVEL=debug
 # Настройки безопасности: по умолчанию чаты не авторизованы (fail-closed).
 # Установите ALLOW_ALL_CHATS=true для отключения проверок, либо задайте ALLOWED_CHATS.
 ALLOW_ALL_CHATS=true
 # ALLOWED_CHATS=-100123456789
-# Опционально настройте RATE_LIMIT_MAX_REQUESTS
+# Опционально настройте rate limit. Некорректный RATE_LIMIT_MAX_REQUESTS работает в fail-closed режиме; некорректное окно заменяется на 3600.
+# RATE_LIMIT_MAX_REQUESTS=5
+# RATE_LIMIT_WINDOW_SEC=3600
 # Режим минимизации PII: Установите REDACT_USER_IDENTITIES=true для замены реальных имен/юзернеймов псевдонимами
 REDACT_USER_IDENTITIES=false
 ```
@@ -152,4 +159,4 @@ sudo systemctl status telegram-bot
 sudo journalctl -u telegram-bot -f -o cat
 ```
 
-Если вы настроили `DEBUG=true` в файле `.env`, отладочные сообщения также будут отображаться в журнале.
+Если вы настроили `DEBUG=true`, `DEBUG=1` или `LOG_LEVEL=debug` в файле `.env`, отладочные сообщения также будут отображаться в журнале.
