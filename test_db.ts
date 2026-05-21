@@ -20,6 +20,20 @@ async function runTests(): Promise<void> {
     await db.initDb();
     assert.ok(fs.existsSync(testDbPath), "Test DB file should exist after initialization");
 
+    // 1b. Test concurrent DB initialization
+    console.log("Testing concurrent DB initialization...");
+    await db.closeDb();
+    if (fs.existsSync(testDbPath)) {
+      fs.unlinkSync(testDbPath);
+    }
+    await Promise.all([
+      db.initDb(),
+      db.initDb(),
+      db.initDb()
+    ]);
+    assert.ok(fs.existsSync(testDbPath), "Test DB file should exist after concurrent initialization");
+
+
     // 2. Test saving a message
     console.log("Testing saveMessage...");
     const now = Math.floor(Date.now() / 1000);

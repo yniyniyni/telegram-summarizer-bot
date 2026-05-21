@@ -17,6 +17,7 @@ export interface SavedMessage {
 
 let dbPath = 'data/bot_messages.db';
 let dbInstance: Database<sqlite3.Database, sqlite3.Statement> | null = null;
+let initPromise: Promise<void> | null = null;
 
 /**
  * Dynamically set the database path.
@@ -38,36 +39,55 @@ export function getDbPath(): string {
  * Open the SQLite database and run DDL setup.
  */
 export async function initDb(): Promise<void> {
+  if (dbInstance) {
+    return;
+  }
+  if (initPromise) {
+    return initPromise;
+  }
+
   const dirName = path.dirname(dbPath);
   if (dirName && !fs.existsSync(dirName)) {
     fs.mkdirSync(dirName, { recursive: true });
   }
 
-  dbInstance = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
+  initPromise = (async () => {
+    const instance = await open({
+      filename: dbPath,
+      driver: sqlite3.Database
+    });
 
-  await dbInstance.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      chat_id INTEGER,
-      message_id INTEGER,
-      user_id INTEGER,
-      username TEXT,
-      first_name TEXT,
-      last_name TEXT,
-      text TEXT,
-      timestamp INTEGER,
-      thread_id INTEGER,
-      PRIMARY KEY (chat_id, message_id)
-    )
-  `);
+    await instance.exec(`
+      CREATE TABLE IF NOT EXISTS messages (
+        chat_id INTEGER,
+        message_id INTEGER,
+        user_id INTEGER,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        text TEXT,
+        timestamp INTEGER,
+        thread_id INTEGER,
+        PRIMARY KEY (chat_id, message_id)
+      )
+    `);
 
-  await dbInstance.exec(`
-    CREATE INDEX IF NOT EXISTS idx_messages_chat_time 
-    ON messages (chat_id, timestamp)
-  `);
+    await instance.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_chat_time 
+      ON messages (chat_id, timestamp)
+    `);
+
+    dbInstance = instance;
+  })();
+
+  try {
+    await initPromise;
+  } catch (error) {
+    initPromise = null;
+    throw error;
+  }
 }
+
 
 /**
  * Save or update a message in SQLite.
@@ -158,4 +178,6 @@ export async function closeDb(): Promise<void> {
     await dbInstance.close();
     dbInstance = null;
   }
+  initPromise = null;
 }
+
