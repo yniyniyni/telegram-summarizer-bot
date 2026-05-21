@@ -18,12 +18,12 @@
     "@google/genai": "^2.5.0",
     "dotenv": "^16.4.5",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
+    "sqlite3": "^6.0.1",
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
-    "typescript": "^5.4.5",
+    "@types/node": "^20.12.12",
     "tsx": "^4.19.2",
-    "@types/node": "^20.12.12"
+    "typescript": "^5.4.5"
   }
 }
