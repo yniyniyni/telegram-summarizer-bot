@@ -4,6 +4,13 @@ import { getLocale } from './locales.js';
 import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
+export const MAX_TRANSCRIPT_CHARS = 120_000;
+
+interface BoundedTranscript {
+  transcript: string;
+  includedTextMessageCount: number;
+  skippedTextMessageCount: number;
+}
 
 /**
  * Initialize and retrieve the GoogleGenAI client instance.
@@ -55,6 +62,126 @@ export function formatTimestamp(timestamp: number, timezone: string): string {
   }
 }
 
+function formatMessageLine(msg: SavedMessage, timezoneName: string): string | null {
+  const locale = getLocale();
+  const text = (msg.text || '').trim();
+  if (!text) return null;
+
+  const timeStr = formatTimestamp(msg.timestamp, timezoneName);
+  const firstName = msg.first_name || locale.noName;
+  const lastName = msg.last_name || "";
+  const name = `${firstName} ${lastName}`.trim();
+  const username = msg.username;
+  const userInfo = username ? `${name} (@${username})` : name;
+
+  return `[${timeStr}] ${userInfo}: ${text}`;
+}
+
+function getSkippedMessagesLine(skippedCount: number): string {
+  const lang = (process.env.BOT_LANGUAGE || 'en').toLowerCase();
+  if (lang === 'ru') {
+    return `[Пропущено ${skippedCount} более старых текстовых сообщений из-за ограничения размера запроса.]`;
+  }
+  return `[Skipped ${skippedCount} older text messages due to the prompt size limit.]`;
+}
+
+function truncateLineToBudget(line: string, maxChars: number): string {
+  const suffix = '... [truncated to fit prompt size limit]';
+  if (line.length <= maxChars) return line;
+  if (maxChars <= suffix.length) return line.slice(0, Math.max(0, maxChars));
+  return `${line.slice(0, maxChars - suffix.length)}${suffix}`;
+}
+
+export function buildBoundedTranscript(
+  messages: SavedMessage[],
+  timezoneName = 'Europe/Moscow',
+  maxChars = MAX_TRANSCRIPT_CHARS
+): BoundedTranscript {
+  const formattedLines = messages
+    .map((msg) => formatMessageLine(msg, timezoneName))
+    .filter((line): line is string => Boolean(line));
+
+  if (formattedLines.length === 0 || maxChars <= 0) {
+    return {
+      transcript: '',
+      includedTextMessageCount: 0,
+      skippedTextMessageCount: formattedLines.length
+    };
+  }
+
+  const selectLatestLines = (budget: number): string[] => {
+    if (budget <= 0) return [];
+
+    const selectedLines: string[] = [];
+    let usedChars = 0;
+
+    for (let i = formattedLines.length - 1; i >= 0; i--) {
+      const line = formattedLines[i];
+      const separatorLength = selectedLines.length > 0 ? 1 : 0;
+      const remainingChars = budget - usedChars - separatorLength;
+
+      if (remainingChars <= 0) break;
+
+      if (line.length <= remainingChars) {
+        selectedLines.push(line);
+        usedChars += separatorLength + line.length;
+        continue;
+      }
+
+      if (selectedLines.length === 0) {
+        selectedLines.push(truncateLineToBudget(line, remainingChars));
+      }
+      break;
+    }
+
+    return selectedLines.reverse();
+  };
+
+  let selectedLines = selectLatestLines(maxChars);
+  let skippedTextMessageCount = formattedLines.length - selectedLines.length;
+  if (skippedTextMessageCount === 0) {
+    return {
+      transcript: selectedLines.join('\n'),
+      includedTextMessageCount: selectedLines.length,
+      skippedTextMessageCount
+    };
+  }
+
+  for (let attempts = 0; attempts < 3; attempts++) {
+    const skippedLine = getSkippedMessagesLine(skippedTextMessageCount);
+    const contentBudget = maxChars - skippedLine.length - 1;
+
+    if (contentBudget <= 0) {
+      const transcript = truncateLineToBudget(skippedLine, maxChars);
+      return {
+        transcript,
+        includedTextMessageCount: 0,
+        skippedTextMessageCount: formattedLines.length
+      };
+    }
+
+    selectedLines = selectLatestLines(contentBudget);
+    const adjustedSkippedTextMessageCount = formattedLines.length - selectedLines.length;
+
+    if (adjustedSkippedTextMessageCount === skippedTextMessageCount) {
+      return {
+        transcript: [skippedLine, ...selectedLines].join('\n'),
+        includedTextMessageCount: selectedLines.length,
+        skippedTextMessageCount
+      };
+    }
+
+    skippedTextMessageCount = adjustedSkippedTextMessageCount;
+  }
+
+  const skippedLine = getSkippedMessagesLine(skippedTextMessageCount);
+  return {
+    transcript: [skippedLine, ...selectedLines].join('\n').slice(0, maxChars),
+    includedTextMessageCount: selectedLines.length,
+    skippedTextMessageCount
+  };
+}
+
 /**
  * Format chat messages and generate a structured summary using gemini-3.1-flash-lite.
  * @param messages List of message objects.
@@ -72,30 +199,16 @@ export async function summarizeMessages(
     return locale.noMessages;
   }
 
-  const transcriptLines: string[] = [];
-  for (const msg of messages) {
-    const timeStr = formatTimestamp(msg.timestamp, timezoneName);
-    
-    // Format sender details
-    const firstName = msg.first_name || locale.noName;
-    const lastName = msg.last_name || "";
-    const name = `${firstName} ${lastName}`.trim();
-    const username = msg.username;
-    const userInfo = username ? `${name} (@${username})` : name;
-
-    const text = (msg.text || '').trim();
-    if (!text) continue;
-
-    transcriptLines.push(`[${timeStr}] ${userInfo}: ${text}`);
-  }
-
-  const transcript = transcriptLines.join('\n');
+  const { transcript, includedTextMessageCount, skippedTextMessageCount } = buildBoundedTranscript(messages, timezoneName);
   if (!transcript) {
     return locale.noTextMessages;
   }
+  if (skippedTextMessageCount > 0) {
+    log("INFO", `Gemini transcript was truncated: skipped ${skippedTextMessageCount} older text messages, included ${includedTextMessageCount}.`);
+  }
 
   const systemInstruction = locale.systemInstruction;
-  const userPrompt = locale.userPromptTemplate(timeframeDesc, messages.length, transcript);
+  const userPrompt = locale.userPromptTemplate(timeframeDesc, includedTextMessageCount, transcript);
 
   try {
     const aiClient = getAIClient();
