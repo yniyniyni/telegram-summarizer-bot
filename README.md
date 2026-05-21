@@ -105,3 +105,7 @@ node dist/main.js
     *   `@bot_username summarize last 30 minutes` (Russian queries like `суммаризуй за последний час` are also supported)
 
 *Note: If the time period cannot be parsed, the bot defaults to summarizing the last 24 hours.*
+
+## License
+
+MIT. [LICENSE](LICENSE).
