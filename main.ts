@@ -4,6 +4,7 @@ import path from 'path';
 import { Telegraf, Context } from 'telegraf';
 import * as db from './db.js';
 import * as summarizer from './summarizer.js';
+import { getLocale } from './locales.js';
 
 // Setup basic logger
 function log(level: string, message: string, ...args: any[]): void {
@@ -37,93 +38,73 @@ export function getMidnightTimestamp(timezoneName: string): number {
  * Parses natural language requests for a timeframe in Russian/English.
  * @param text 
  * @param timezoneName 
- * @returns [sinceTimestampEpoch, Russian timeframe description]
+ * @returns [sinceTimestampEpoch, localized timeframe description]
  */
 export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow'): [number, string] {
+  const locale = getLocale();
   text = text.toLowerCase();
   const now = Math.floor(Date.now() / 1000);
   const defaultSeconds = 24 * 3600;
-  const defaultDesc = "последние 24 часа";
+  const defaultDesc = locale.timeframeDefault;
 
   // 1. Match numeric hours: "N часов", "N часа", "за N часов", "3ч", "3h", etc.
   const hoursMatch = text.match(/(\d+)\s*(?:час|часа|часов|ч|hour|hours|h)/);
   if (hoursMatch) {
     const hours = parseInt(hoursMatch[1], 10);
-    let desc;
-    if (hours % 10 === 1 && hours % 100 !== 11) {
-      desc = `последний ${hours} час`;
-    } else if ([2, 3, 4].includes(hours % 10) && ![12, 13, 14].includes(hours % 100)) {
-      desc = `последние ${hours} часа`;
-    } else {
-      desc = `последние ${hours} часов`;
-    }
+    const desc = locale.timeframeHour(hours);
     return [now - (hours * 3600), desc];
   }
 
   // Single hour check
   if (text.includes("час") || text.includes("hour")) {
-    return [now - 3600, "последний час"];
+    return [now - 3600, locale.timeframeHourSingle];
   }
 
   // 2. Match numeric minutes: "30 минут", "15 мин"
   const minsMatch = text.match(/(\d+)\s*(?:минут|минуты|минуту|мин|m|min|minute|minutes)/);
   if (minsMatch) {
     const mins = parseInt(minsMatch[1], 10);
-    let desc;
-    if (mins % 10 === 1 && mins % 100 !== 11) {
-      desc = `последнюю ${mins} минуту`;
-    } else if ([2, 3, 4].includes(mins % 10) && ![12, 13, 14].includes(mins % 100)) {
-      desc = `последние ${mins} минуты`;
-    } else {
-      desc = `последние ${mins} минут`;
-    }
+    const desc = locale.timeframeMin(mins);
     return [now - (mins * 60), desc];
   }
 
   if (text.includes("минут") || text.includes("min")) {
-    return [now - 600, "последние 10 минут"];
+    return [now - 600, locale.timeframeMinSingle];
   }
 
-  // 3. Match numeric days: "3 дня", "5 дней"
-  const daysMatch = text.match(/(\d+)\s*(?:день|дня|дней|дн|day|days\b|d\b)/);
-  if (daysMatch) {
-    const days = parseInt(daysMatch[1], 10);
-    let desc;
-    if (days % 10 === 1 && days % 100 !== 11) {
-      desc = `последний ${days} day`.replace('day', 'день');
-    } else if ([2, 3, 4].includes(days % 10) && ![12, 13, 14].includes(days % 100)) {
-      desc = `последние ${days} дня`;
-    } else {
-      desc = `последние ${days} дней`;
-    }
-    return [now - (days * 24 * 3600), desc];
-  }
-
-  if (text.includes("сутки") || text.includes("суток")) {
-    return [now - (24 * 3600), "последние сутки"];
-  }
-  if (text.includes("день") || text.includes("day")) {
-    return [now - (24 * 3600), "последний день"];
-  }
-
-  // 4. Today / "сегодня" (from 00:00 of the current day in target timezone)
+  // 3. Today / "сегодня" (from 00:00 of the current day in target timezone)
   if (text.includes("сегодня") || text.includes("today")) {
     let midnightTs = getMidnightTimestamp(timezoneName);
     if (midnightTs >= now) {
       midnightTs = now - defaultSeconds;
     }
-    return [midnightTs, "сегодня"];
+    return [midnightTs, locale.timeframeToday];
   }
 
-  // 5. Yesterday / "вчера" (from 00:00 of yesterday in target timezone)
+  // 4. Yesterday / "вчера" (from 00:00 of yesterday in target timezone)
   if (text.includes("вчера") || text.includes("yesterday")) {
     const yesterdayTs = getMidnightTimestamp(timezoneName) - (24 * 3600);
-    return [yesterdayTs, "вчера и сегодня"];
+    return [yesterdayTs, locale.timeframeYesterday];
+  }
+
+  // 5. Match numeric days: "3 дня", "5 дней"
+  const daysMatch = text.match(/(\d+)\s*(?:день|дня|дней|дн|day|days\b|d\b)/);
+  if (daysMatch) {
+    const days = parseInt(daysMatch[1], 10);
+    const desc = locale.timeframeDay(days);
+    return [now - (days * 24 * 3600), desc];
+  }
+
+  if (text.includes("сутки") || text.includes("суток")) {
+    return [now - (24 * 3600), locale.timeframe24h];
+  }
+  if (text.includes("день") || text.includes("day")) {
+    return [now - (24 * 3600), locale.timeframeDaySingle];
   }
 
   // 6. Week / "неделя"
   if (text.includes("недел") || text.includes("week")) {
-    return [now - (7 * 24 * 3600), "последнюю неделю"];
+    return [now - (7 * 24 * 3600), locale.timeframeWeek];
   }
 
   return [now - defaultSeconds, defaultDesc];
@@ -210,13 +191,14 @@ async function runSummarization(ctx: Context): Promise<void> {
   const [sinceTs, timeframeDesc] = parseTimeframe(text, tz);
   log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Query text="${text}". Timeframe parsed: sinceTs=${sinceTs} (${timeframeDesc})`);
 
+  const locale = getLocale();
   const replyOptions: any = {};
   if (threadId) {
     replyOptions.message_thread_id = threadId;
   }
 
   const statusMessage = await ctx.reply(
-    "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
+    locale.gatheringMessages,
     { ...replyOptions, parse_mode: 'HTML' }
   );
 
@@ -242,7 +224,7 @@ async function runSummarization(ctx: Context): Promise<void> {
         ctx.chat.id,
         statusMessage.message_id,
         undefined,
-        `📭 За период <b>${timeframeDesc}</b> не найдено текстовых сообщений для анализа.`,
+        locale.noTextMessagesForPeriod(timeframeDesc),
         { parse_mode: 'HTML' }
       );
       return;
@@ -298,7 +280,7 @@ async function runSummarization(ctx: Context): Promise<void> {
         ctx.chat.id,
         statusMessage.message_id,
         undefined,
-        `❌ Не удалось сгенерировать выжимку из-за ошибки: <code>${err.message || err}</code>`,
+        locale.failedToGenerateWithError(err.message || err),
         { parse_mode: 'HTML' }
       );
     } catch (editErr) {
@@ -311,6 +293,7 @@ async function runSummarization(ctx: Context): Promise<void> {
  * Filter mentions/private chat inquiries.
  */
 async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
+  const locale = getLocale();
   const message = ctx.message;
   if (!message || !('text' in message) || !message.text || !ctx.chat) return;
 
@@ -327,14 +310,7 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
     if (!shouldSummarize) {
       if (isPrivate) {
         await ctx.reply(
-          "👋 <b>Привет! Я Gemini Суммаризатор чатов.</b>\n\n" +
-          "Чтобы сделать краткую выжимку переписки:\n" +
-          "1. Добавьте меня в групповой чат.\n" +
-          "2. Убедитесь, что у меня <b>отключена Group Privacy</b> (в настройках бота у @BotFather) " +
-          "или сделайте меня администратором, чтобы я мог видеть сообщения.\n" +
-          "3. Напишите в группе запрос через мой тег, например:\n" +
-          "<code>@bot_username суммаризуй чат за последние 3 часа</code>\n\n" +
-          "Также вы можете отправить запрос <code>суммаризуй за час</code> прямо здесь, чтобы получить выжимку нашего диалога.",
+          locale.welcomeMessage(botUsername || 'bot_username'),
           { parse_mode: 'HTML' }
         );
       }

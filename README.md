@@ -5,9 +5,9 @@
 An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` framework, and the official `@google/genai` SDK for automatic message logging and summarization in group chats using the **Gemini 3.1 Flash Lite** model.
 
 ## Features
+*   **Multi-language Support**: Configurable bot interface and summary language (English and Russian are fully supported; see `.env` settings). Supports natural time parsing in both languages.
 *   **Real-time logging**: The bot tracks and logs text messages and media captions into a local SQLite database.
 *   **Edit synchronization**: Automatically updates message content in the database if a user edits their message in Telegram.
-*   **Natural time parsing (RU/EN)**: Supports flexible time queries (e.g. `last hour`, `for 3 hours`, `today`, `last 5 days`, `yesterday`, etc.).
 *   **Memory safe**: A background cron job cleans up messages older than 30 days once a day.
 *   **Markup protection**: If Gemini returns invalid Markdown, the bot automatically falls back to plain text mode to avoid Telegram API formatting errors.
 *   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
@@ -55,6 +55,7 @@ Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.co
     GEMINI_API_KEY=your_gemini_api_key
     DB_PATH=data/bot_messages.db
     DEFAULT_TIMEZONE=Europe/Moscow
+    BOT_LANGUAGE=en
     ```
 
 ### Testing Functionality
