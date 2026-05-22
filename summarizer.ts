@@ -6,6 +6,12 @@ import { escapeHTML, log } from './utils.js';
 let aiInstance: GoogleGenAI | null = null;
 export const MAX_TRANSCRIPT_CHARS = 120_000;
 
+interface Target {
+  regex: RegExp;
+  pseudonym: string;
+  length: number;
+}
+
 interface BoundedTranscript {
   transcript: string;
   includedTextMessageCount: number;
@@ -78,11 +84,7 @@ function formatMessageLine(msg: SavedMessage, timezoneName: string): string | nu
 }
 
 function getSkippedMessagesLine(skippedCount: number): string {
-  const lang = (process.env.BOT_LANGUAGE || 'en').toLowerCase();
-  if (lang === 'ru') {
-    return `[Пропущено ${skippedCount} более старых текстовых сообщений из-за ограничения размера запроса.]`;
-  }
-  return `[Skipped ${skippedCount} older text messages due to the prompt size limit.]`;
+  return getLocale().skippedMessages(skippedCount);
 }
 
 function truncateLineToBudget(line: string, maxChars: number): string {
@@ -105,11 +107,6 @@ export function buildBoundedTranscript(
     const userIdToPseudonym = new Map<number, string>();
     let userCount = 0;
 
-    interface Target {
-      regex: RegExp;
-      pseudonym: string;
-      length: number;
-    }
     const targets: Target[] = [];
 
     const buildTargetRegex = (target: string, pseudonym: string): Target => {

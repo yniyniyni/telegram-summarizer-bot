@@ -139,6 +139,7 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   }
   const maxRequests = parseInt(maxRequestsStr, 10);
   if (isNaN(maxRequests) || maxRequests < 0) {
+    log("WARN", `Invalid RATE_LIMIT_MAX_REQUESTS value: "${maxRequestsStr}". Rate limiting all requests as a safety measure.`);
     return { limited: true, retryAfter: 3600 };
   }
 
@@ -173,12 +174,6 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
 
   // Record current request
   info.timestamps.push(now);
-
-  // Clean up entries with no remaining timestamps (shouldn't happen here, but guard against it)
-  if (info.timestamps.length === 0) {
-    rateLimits.delete(chatId);
-  }
-
   return { limited: false };
 }
 

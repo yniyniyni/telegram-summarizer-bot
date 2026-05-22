@@ -8,6 +8,7 @@ export interface Locales {
   userPromptTemplate: (timeframeDesc: string, count: number, transcript: string) => string;
   geminiError: (err: string) => string;
   failedToGenerate: string;
+  skippedMessages: (count: number) => string;
   
   gatheringMessages: string;
   noTextMessagesForPeriod: (timeframeDesc: string) => string;
@@ -90,6 +91,7 @@ ${transcript}
 `,
   geminiError: (err) => `⚠️ Произошла ошибка при обращении к Gemini API: ${err}`,
   failedToGenerate: "Не удалось сгенерировать текст выжимки.",
+  skippedMessages: (count) => `[Пропущено ${count} более старых текстовых сообщений из-за ограничения размера запроса.]`,
   
   gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${escapeHTML(timeframeDesc)}</b> не найдено текстовых сообщений для анализа.`,
@@ -191,6 +193,7 @@ ${transcript}
 `,
   geminiError: (err) => `⚠️ An error occurred while contacting Gemini API: ${err}`,
   failedToGenerate: "Failed to generate summary text.",
+  skippedMessages: (count) => `[Skipped ${count} older text messages due to the prompt size limit.]`,
   
   gatheringMessages: "⏳ <b>Gathering messages and generating summary via Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${escapeHTML(timeframeDesc)}</b>.`,
