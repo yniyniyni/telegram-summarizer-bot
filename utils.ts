@@ -165,11 +165,6 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   // Filter out timestamps older than the window
   info.timestamps = info.timestamps.filter(ts => ts > cutoff);
 
-  // Clean up empty entries to prevent memory leak
-  if (info.timestamps.length === 0) {
-    rateLimits.delete(chatId);
-  }
-
   if (info.timestamps.length >= maxRequests) {
     const oldestTs = info.timestamps[0];
     const retryAfter = (oldestTs + windowSec) - now;
@@ -177,12 +172,13 @@ export function isRateLimited(chatId: number): { limited: boolean; retryAfter?: 
   }
 
   // Record current request
-  let currentInfo = rateLimits.get(chatId);
-  if (!currentInfo) {
-    currentInfo = { timestamps: [] };
-    rateLimits.set(chatId, currentInfo);
+  info.timestamps.push(now);
+
+  // Clean up entries with no remaining timestamps (shouldn't happen here, but guard against it)
+  if (info.timestamps.length === 0) {
+    rateLimits.delete(chatId);
   }
-  currentInfo.timestamps.push(now);
+
   return { limited: false };
 }
 
