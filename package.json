@@ -1,5 +1,5 @@
 {
-  "name": "telegram-gemini-summarizer-bot",
+  "name": "telegram-summarizer-bot",
   "version": "1.0.0",
   "description": "Telegram bot for chat summarization using Gemini 3.1 Flash Lite and SQLite written in TypeScript.",
   "license": "MIT",

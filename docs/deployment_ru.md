@@ -44,14 +44,14 @@ sudo dnf install -y sqlite sqlite-devel
 ## 🚀 Установка и сборка
 
 ### 1. Клонирование репозитория и установка зависимостей
-Клонируйте репозиторий в нужную папку на сервере (например, `/opt/telegram-gemini-bot`):
+Клонируйте репозиторий в нужную папку на сервере (например, `/opt/telegram-summarizer-bot`):
 
 ```bash
-sudo git clone https://github.com/yniyniyni/telegram-gemini-summarizer-bot /opt/telegram-gemini-bot
-cd /opt/telegram-gemini-bot
+sudo git clone https://github.com/yniyniyni/telegram-summarizer-bot /opt/telegram-summarizer-bot
+cd /opt/telegram-summarizer-bot
 
 # Передача прав на директорию вашему текущему пользователю
-sudo chown -R $USER:$USER /opt/telegram-gemini-bot
+sudo chown -R $USER:$USER /opt/telegram-summarizer-bot
 
 # Установка пакетов
 npm install
@@ -68,7 +68,7 @@ nano .env
 TELEGRAM_BOT_TOKEN=ваш_токен_телеграм_бота
 GEMINI_API_KEY=ваш_ключ_gemini_api
 # GOOGLE_API_KEY=ваш_ключ_google_api
-DB_PATH=/opt/telegram-gemini-bot/data/bot_messages.db
+DB_PATH=/opt/telegram-summarizer-bot/data/bot_messages.db
 # Значения DB_PATH с '..' отклоняются при запуске.
 # Временная зона для форматирования дат в промптах. Если указана некорректная зона, бот запишет предупреждение в лог при запуске и переключится на UTC.
 DEFAULT_TIMEZONE=Europe/Moscow
@@ -121,7 +121,7 @@ After=network.target
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/opt/telegram-gemini-bot
+WorkingDirectory=/opt/telegram-summarizer-bot
 ExecStart=/usr/bin/node dist/main.js
 Restart=always
 RestartSec=10

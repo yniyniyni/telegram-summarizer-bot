@@ -44,14 +44,14 @@ sudo dnf install -y sqlite sqlite-devel
 ## 🚀 Installation & Build
 
 ### 1. Clone the Repository & Install Dependencies
-Clone the repository to a preferred deployment folder (e.g., `/opt/telegram-gemini-bot`):
+Clone the repository to a preferred deployment folder (e.g., `/opt/telegram-summarizer-bot`):
 
 ```bash
-sudo git clone https://github.com/yniyniyni/telegram-gemini-summarizer-bot /opt/telegram-gemini-bot
-cd /opt/telegram-gemini-bot
+sudo git clone https://github.com/yniyniyni/telegram-summarizer-bot /opt/telegram-summarizer-bot
+cd /opt/telegram-summarizer-bot
 
 # Change folder ownership to your current non-root user
-sudo chown -R $USER:$USER /opt/telegram-gemini-bot
+sudo chown -R $USER:$USER /opt/telegram-summarizer-bot
 
 # Install packages
 npm install
@@ -68,7 +68,7 @@ Fill in the configuration details:
 TELEGRAM_BOT_TOKEN=your_real_telegram_bot_token
 GEMINI_API_KEY=your_real_gemini_api_key
 # GOOGLE_API_KEY=your_real_google_api_key
-DB_PATH=/opt/telegram-gemini-bot/data/bot_messages.db
+DB_PATH=/opt/telegram-summarizer-bot/data/bot_messages.db
 # DB_PATH values containing '..' are rejected on startup.
 # Timezone for date formatting in prompts. If invalid, the bot logs a warning on startup and falls back to UTC.
 DEFAULT_TIMEZONE=Europe/Moscow
@@ -121,7 +121,7 @@ After=network.target
 [Service]
 Type=simple
 User=youruser
-WorkingDirectory=/opt/telegram-gemini-bot
+WorkingDirectory=/opt/telegram-summarizer-bot
 ExecStart=/usr/bin/node dist/main.js
 Restart=always
 RestartSec=10

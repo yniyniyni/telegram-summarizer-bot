@@ -1,4 +1,4 @@
-# Telegram Gemini Chat Summarizer Bot (TypeScript)
+# Telegram Chat Summarizer Bot (TypeScript)
 
 [На русском](docs/README_ru.md)
 
