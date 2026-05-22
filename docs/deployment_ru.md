@@ -80,6 +80,8 @@ BOT_LANGUAGE=ru
 # Установите ALLOW_ALL_CHATS=true для отключения проверок, либо задайте ALLOWED_CHATS.
 ALLOW_ALL_CHATS=true
 # ALLOWED_CHATS=-100123456789
+# Дополнительно, ограничить личные сообщения (DMs) конкретными пользователями, даже если ALLOW_ALL_CHATS=true:
+# ALLOWED_USERS=12345678
 # Опционально настройте rate limit. Некорректный RATE_LIMIT_MAX_REQUESTS работает в fail-closed режиме; некорректное окно заменяется на 3600.
 # RATE_LIMIT_MAX_REQUESTS=5
 # RATE_LIMIT_WINDOW_SEC=3600

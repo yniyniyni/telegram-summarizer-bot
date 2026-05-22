@@ -83,11 +83,13 @@ function runTests(): void {
   console.log("Testing isChatAuthorized...");
   const origAllowedChats = process.env.ALLOWED_CHATS;
   const origAllowAllChats = process.env.ALLOW_ALL_CHATS;
+  const origAllowedUsers = process.env.ALLOWED_USERS;
 
   try {
     // Unset ALLOWED_CHATS, no ALLOW_ALL_CHATS (should be false)
     delete process.env.ALLOWED_CHATS;
     delete process.env.ALLOW_ALL_CHATS;
+    delete process.env.ALLOWED_USERS;
     assert.strictEqual(isChatAuthorized(123), false);
     assert.strictEqual(isChatAuthorized(-100123), false);
 
@@ -118,6 +120,34 @@ function runTests(): void {
     assert.strictEqual(isChatAuthorized(123), true);
     assert.strictEqual(isChatAuthorized(789), true);
     assert.strictEqual(isChatAuthorized(999), false);
+
+    // --- ALLOWED_USERS Tests ---
+    // 1. ALLOWED_USERS restricts positive IDs (private chats)
+    process.env.ALLOWED_USERS = "555, 666";
+    // Authorized user
+    assert.strictEqual(isChatAuthorized(555), true);
+    assert.strictEqual(isChatAuthorized(666), true);
+    // Unauthorized user (even though ALLOWED_CHATS has 123)
+    assert.strictEqual(isChatAuthorized(123), false);
+    assert.strictEqual(isChatAuthorized(789), false);
+    
+    // Group chat (negative ID) should not be affected by ALLOWED_USERS, but determined by ALLOWED_CHATS
+    process.env.ALLOWED_CHATS = "-10012, 123";
+    assert.strictEqual(isChatAuthorized(-10012), true);
+    assert.strictEqual(isChatAuthorized(-10099), false);
+
+    // 2. ALLOWED_USERS restricts positive IDs even when ALLOW_ALL_CHATS=true
+    process.env.ALLOW_ALL_CHATS = "true";
+    // Group chats are allowed under ALLOW_ALL_CHATS=true
+    assert.strictEqual(isChatAuthorized(-10099), true);
+    // User in ALLOWED_USERS is allowed
+    assert.strictEqual(isChatAuthorized(555), true);
+    // User NOT in ALLOWED_USERS is NOT allowed (restricted DM)
+    assert.strictEqual(isChatAuthorized(777), false);
+
+    // Cleanup ALLOWED_USERS/ALLOW_ALL_CHATS to verify fallback
+    delete process.env.ALLOWED_USERS;
+    delete process.env.ALLOW_ALL_CHATS;
   } finally {
     if (origAllowedChats === undefined) {
       delete process.env.ALLOWED_CHATS;
@@ -128,6 +158,11 @@ function runTests(): void {
       delete process.env.ALLOW_ALL_CHATS;
     } else {
       process.env.ALLOW_ALL_CHATS = origAllowAllChats;
+    }
+    if (origAllowedUsers === undefined) {
+      delete process.env.ALLOWED_USERS;
+    } else {
+      process.env.ALLOWED_USERS = origAllowedUsers;
     }
   }
   console.log("  Passed isChatAuthorized tests.");

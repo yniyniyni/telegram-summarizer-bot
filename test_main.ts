@@ -32,6 +32,7 @@ async function runTests(): Promise<void> {
   const testDbPath = "data/test_main_messages.db";
   const originalAllowedChats = process.env.ALLOWED_CHATS;
   const originalAllowAll = process.env.ALLOW_ALL_CHATS;
+  const originalAllowedUsers = process.env.ALLOWED_USERS;
 
   db.setDbPath(testDbPath);
   if (fs.existsSync(testDbPath)) {
@@ -124,12 +125,13 @@ async function runTests(): Promise<void> {
     };
 
     try {
-      // 1. Unset both ALLOWED_CHATS and ALLOW_ALL_CHATS
+      // 1. Unset ALLOWED_CHATS, ALLOW_ALL_CHATS, and ALLOWED_USERS
       delete process.env.ALLOWED_CHATS;
       delete process.env.ALLOW_ALL_CHATS;
+      delete process.env.ALLOWED_USERS;
       checkFailClosedMode();
       assert.ok(
-        loggedLines.some(line => line.includes("[WARN]") && line.includes("WARNING: Bot is running in fail-closed mode. No chats are authorized. Please configure ALLOWED_CHATS or ALLOW_ALL_CHATS=true.")),
+        loggedLines.some(line => line.includes("[WARN]") && line.includes("WARNING: Bot is running in fail-closed mode. No chats or users are authorized. Please configure ALLOWED_CHATS, ALLOWED_USERS or ALLOW_ALL_CHATS=true.")),
         "Should log warning when in fail-closed mode"
       );
 
@@ -157,6 +159,19 @@ async function runTests(): Promise<void> {
         false,
         "Should not log warning when ALLOW_ALL_CHATS is true"
       );
+
+      // Reset logs array
+      loggedLines.length = 0;
+
+      // 4. Set ALLOWED_USERS, should NOT log warning
+      delete process.env.ALLOW_ALL_CHATS;
+      process.env.ALLOWED_USERS = "555";
+      checkFailClosedMode();
+      assert.strictEqual(
+        loggedLines.some(line => line.includes("WARNING: Bot is running in fail-closed mode")),
+        false,
+        "Should not log warning when ALLOWED_USERS is configured"
+      );
     } finally {
       console.log = originalConsoleLog;
     }
@@ -172,6 +187,11 @@ async function runTests(): Promise<void> {
       delete process.env.ALLOW_ALL_CHATS;
     } else {
       process.env.ALLOW_ALL_CHATS = originalAllowAll;
+    }
+    if (originalAllowedUsers === undefined) {
+      delete process.env.ALLOWED_USERS;
+    } else {
+      process.env.ALLOWED_USERS = originalAllowedUsers;
     }
     await db.closeDb();
     if (fs.existsSync(testDbPath)) {

@@ -80,6 +80,8 @@ BOT_LANGUAGE=en
 # Set ALLOW_ALL_CHATS=true to bypass authorization, or set ALLOWED_CHATS.
 ALLOW_ALL_CHATS=true
 # ALLOWED_CHATS=-100123456789
+# Optionally, restrict private messages (DMs) to specific users even if ALLOW_ALL_CHATS=true:
+# ALLOWED_USERS=12345678
 # Optionally set rate limits. Invalid RATE_LIMIT_MAX_REQUESTS values fail closed; invalid windows fall back to 3600.
 # RATE_LIMIT_MAX_REQUESTS=5
 # RATE_LIMIT_WINDOW_SEC=3600

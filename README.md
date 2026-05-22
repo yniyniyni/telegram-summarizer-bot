@@ -42,7 +42,8 @@ You can configure rate limits, privacy modes, and whitelist specific chat IDs in
     *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour; invalid values fall back to `3600`).
 *   **Chat ID Authorization**:
     *   `ALLOWED_CHATS`: A comma-separated list of numeric chat IDs allowed to use the bot (e.g., `-100123456789,-100987654321,12345678`).
-    *   `ALLOW_ALL_CHATS`: Set to `true` to explicitly disable authorization checks and allow all chats. By default, authorization operates in a **fail-closed** mode: if `ALLOW_ALL_CHATS` is not `true` and `ALLOWED_CHATS` is empty or unset, all chats will be unauthorized by default.
+    *   `ALLOWED_USERS`: A comma-separated list of numeric Telegram user IDs allowed to interact with the bot in private messages (DMs). If configured, it restricts private chats even if `ALLOW_ALL_CHATS` is set to `true`.
+    *   `ALLOW_ALL_CHATS`: Set to `true` to explicitly disable authorization checks and allow all chats. By default, authorization operates in a **fail-closed** mode: if `ALLOW_ALL_CHATS` is not `true` and both `ALLOWED_CHATS` and `ALLOWED_USERS` are empty or unset, all chats will be unauthorized by default.
 *   **PII Minimization**:
     *   `REDACT_USER_IDENTITIES`: Set to `true` to enable user identity redaction in transcripts. In this mode, real names and usernames in message headers and bodies are replaced with stable pseudonyms (e.g., `User 1`, `User 2`), and any other username mentions are replaced with `@user_redacted`.
 *   **Logging**:

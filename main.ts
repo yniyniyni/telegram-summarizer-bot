@@ -474,8 +474,8 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
  * Checks fail-closed mode on startup and logs a warning if misconfigured.
  */
 export function checkFailClosedMode(): void {
-  if (!process.env.ALLOWED_CHATS && process.env.ALLOW_ALL_CHATS !== 'true') {
-    log("WARN", "WARNING: Bot is running in fail-closed mode. No chats are authorized. Please configure ALLOWED_CHATS or ALLOW_ALL_CHATS=true.");
+  if (!process.env.ALLOWED_CHATS && !process.env.ALLOWED_USERS && process.env.ALLOW_ALL_CHATS !== 'true') {
+    log("WARN", "WARNING: Bot is running in fail-closed mode. No chats or users are authorized. Please configure ALLOWED_CHATS, ALLOWED_USERS or ALLOW_ALL_CHATS=true.");
   }
 }
 

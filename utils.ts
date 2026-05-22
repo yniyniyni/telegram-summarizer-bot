@@ -219,7 +219,30 @@ export function resetRateLimits(): void {
 let cachedAllowedChats: Set<number> | null = null;
 let cachedAllowedChatsRaw: string | undefined = undefined;
 
+// Cached allowed users set for O(1) lookup
+let cachedAllowedUsers: Set<number> | null = null;
+let cachedAllowedUsersRaw: string | undefined = undefined;
+
 export function isChatAuthorized(chatId: number): boolean {
+  // If it's a private chat (chatId > 0), check ALLOWED_USERS if configured.
+  // Private message authorization can restrict access even if ALLOW_ALL_CHATS is true.
+  if (chatId > 0) {
+    const rawUsers = process.env.ALLOWED_USERS;
+    if (rawUsers !== undefined && rawUsers !== "") {
+      if (rawUsers !== cachedAllowedUsersRaw) {
+        cachedAllowedUsersRaw = rawUsers;
+        cachedAllowedUsers = new Set(
+          rawUsers.split(',')
+            .map(s => s.trim())
+            .filter(s => s !== '')
+            .map(s => Number(s))
+            .filter(n => !isNaN(n))
+        );
+      }
+      return cachedAllowedUsers ? cachedAllowedUsers.has(chatId) : false;
+    }
+  }
+
   if (process.env.ALLOW_ALL_CHATS === 'true') {
     return true;
   }
