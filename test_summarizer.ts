@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { buildBoundedTranscript, MAX_TRANSCRIPT_CHARS } from './summarizer.js';
+import { buildBoundedTranscript, getProvider, MAX_TRANSCRIPT_CHARS } from './summarizer.js';
 import { SavedMessage } from './db.js';
 import { getLocale, COMMON_RULES } from './locales.js';
 
@@ -185,6 +185,31 @@ function runTests(): void {
     assert.ok(robLines[1].includes('Привет от User 2!'), `Expected Cyrillic full name to be redacted to 'User 2', got: ${robLines[1]}`);
 
     process.env.REDACT_USER_IDENTITIES = 'false';
+
+    console.log("Testing LLM provider selection...");
+    const originalProvider = process.env.LLM_PROVIDER;
+    try {
+      delete process.env.LLM_PROVIDER;
+      assert.strictEqual(getProvider(), 'gemini', "Default provider should be gemini");
+
+      process.env.LLM_PROVIDER = 'gemini';
+      assert.strictEqual(getProvider(), 'gemini', "Explicit 'gemini' should select gemini");
+
+      process.env.LLM_PROVIDER = 'openai';
+      assert.strictEqual(getProvider(), 'openai', "'openai' should select openai");
+
+      process.env.LLM_PROVIDER = ' OpenAI ';
+      assert.strictEqual(getProvider(), 'openai', "Provider parsing should trim and lowercase");
+
+      process.env.LLM_PROVIDER = 'something-else';
+      assert.strictEqual(getProvider(), 'gemini', "Unknown provider should fall back to gemini");
+    } finally {
+      if (originalProvider === undefined) {
+        delete process.env.LLM_PROVIDER;
+      } else {
+        process.env.LLM_PROVIDER = originalProvider;
+      }
+    }
 
     console.log("✅ All summarizer tests passed successfully!");
   } finally {

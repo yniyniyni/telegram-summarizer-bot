@@ -6,6 +6,22 @@ import { escapeHTML, log } from './utils.js';
 let aiInstance: GoogleGenAI | null = null;
 export const MAX_TRANSCRIPT_CHARS = 120_000;
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
+export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+export type LLMProvider = 'gemini' | 'openai';
+
+/**
+ * Resolve the configured LLM provider. Defaults to 'gemini' for backward
+ * compatibility; set LLM_PROVIDER=openai to use an OpenAI-compatible endpoint.
+ */
+export function getProvider(): LLMProvider {
+  return (process.env.LLM_PROVIDER || 'gemini').trim().toLowerCase() === 'openai'
+    ? 'openai'
+    : 'gemini';
+}
+
 interface Target {
   regex: RegExp;
   pseudonym: string;
@@ -275,7 +291,75 @@ export function buildBoundedTranscript(
 }
 
 /**
- * Format chat messages and generate a structured summary using gemini-3.1-flash-lite.
+ * Generate a summary via the Google Gemini SDK.
+ */
+async function generateWithGemini(systemInstruction: string, userPrompt: string): Promise<string> {
+  const aiClient = getAIClient();
+  const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+
+  log("DEBUG", "==================== [GEMINI API REQUEST] ====================");
+  log("DEBUG", `Model: ${model}`);
+  log("DEBUG", "=============================================================");
+
+  const response = await aiClient.models.generateContent({
+    model,
+    contents: userPrompt,
+    config: {
+      systemInstruction,
+      temperature: 0.3
+    }
+  });
+
+  return response.text || '';
+}
+
+/**
+ * Generate a summary via any OpenAI-compatible Chat Completions endpoint
+ * (OpenAI, OpenRouter, local servers, ...). Uses the native fetch client so
+ * no extra dependency is required.
+ */
+async function generateWithOpenAI(systemInstruction: string, userPrompt: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("FATAL: OPENAI_API_KEY is not set. Cannot use the OpenAI-compatible provider.");
+  }
+  const baseURL = (process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, '');
+  const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+
+  log("DEBUG", "==================== [OPENAI API REQUEST] ====================");
+  log("DEBUG", `Model: ${model} @ ${baseURL}`);
+  log("DEBUG", "=============================================================");
+
+  const response = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    throw new Error(`OpenAI API returned ${response.status} ${response.statusText}: ${errorBody.slice(0, 500)}`);
+  }
+
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data.choices?.[0]?.message?.content || '';
+}
+
+/**
+ * Format chat messages and generate a structured summary using the configured
+ * LLM provider (Gemini by default, or an OpenAI-compatible endpoint).
  * @param messages List of message objects.
  * @param timeframeDesc Description of timeframe range.
  * @param timezoneName Target timezone (e.g. Europe/Moscow).
@@ -302,26 +386,16 @@ export async function summarizeMessages(
   const systemInstruction = locale.systemInstruction;
   const userPrompt = locale.userPromptTemplate(timeframeDesc, includedTextMessageCount, transcript);
 
+  const provider = getProvider();
   try {
-    const aiClient = getAIClient();
-    
-    log("DEBUG", "==================== [GEMINI API REQUEST] ====================");
-    log("DEBUG", `Model: gemini-3.1-flash-lite`);
-    log("DEBUG", "=============================================================");
+    const summary = provider === 'openai'
+      ? await generateWithOpenAI(systemInstruction, userPrompt)
+      : await generateWithGemini(systemInstruction, userPrompt);
 
-    const response = await aiClient.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        temperature: 0.3
-      }
-    });
-
-    return response.text || locale.failedToGenerate;
+    return summary || locale.failedToGenerate;
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    log("ERROR", `Error calling Gemini API: ${errMsg}`);
+    log("ERROR", `Error calling ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API: ${errMsg}`);
     return locale.geminiError(escapeHTML(errMsg));
   }
 }
