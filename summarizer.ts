@@ -438,7 +438,7 @@ export async function summarizeMessages(
     return locale.noTextMessages;
   }
   if (skippedTextMessageCount > 0) {
-    log("INFO", `Gemini transcript was truncated: skipped ${skippedTextMessageCount} older text messages, included ${includedTextMessageCount}.`);
+    log("INFO", `Transcript was truncated: skipped ${skippedTextMessageCount} older text messages, included ${includedTextMessageCount}.`);
   }
 
   const systemInstruction = includeLinks

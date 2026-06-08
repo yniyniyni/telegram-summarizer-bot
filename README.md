@@ -2,17 +2,18 @@
 
 [На русском](docs/README_ru.md)
 
-An asynchronous Telegram bot built with Node.js, TypeScript, the `telegraf` framework, and the official `@google/genai` SDK for automatic message logging and summarization in group chats using the **Gemini 3.1 Flash Lite** model.
+An asynchronous Telegram bot built with Node.js, TypeScript, and the `telegraf` framework for automatic message logging and summarization in group chats. It works out of the box with Google's **Gemini 3.1 Flash Lite** (via the official `@google/genai` SDK) and can be pointed at any **OpenAI-compatible API** (OpenAI, OpenRouter, Together, local vLLM/Ollama servers, …).
 
 **WARNING!!! 100% AI slop project** written by Gemini 3.5 Flash from scratch. Use with caution.
 
 ## Features
+*   **Pluggable LLM provider**: Uses Google Gemini by default, or any OpenAI-compatible Chat Completions endpoint (OpenAI, OpenRouter, local servers, etc.) via `LLM_PROVIDER=openai`. The model is configurable on both providers.
 *   **Multi-language Support**: Configurable bot interface and summary language (English and Russian are fully supported; see `.env` settings). Supports natural time parsing in both languages.
 *   **Real-time logging**: The bot tracks and logs text messages and media captions into a local SQLite database.
 *   **Edit synchronization**: Automatically updates message content in the database if a user edits their message in Telegram.
 *   **Memory safe**: A background cron job cleans up messages older than 30 days once a day.
 *   **Secure database permissions**: Creates the SQLite database directory with mode `0700` when missing and sets the database file itself to mode `0600` on Linux/macOS.
-*   **Markup protection**: Sanitizes Gemini output for Telegram HTML, converts basic Markdown formatting, and falls back to plain text if Telegram still rejects the markup.
+*   **Markup protection**: Sanitizes the LLM output for Telegram HTML, converts basic Markdown formatting, and falls back to plain text if Telegram still rejects the markup.
 *   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
 *   **Private chat support**: In private chats, trigger keywords start summarization; other messages receive a short welcome/help response.
 
@@ -32,11 +33,17 @@ By default, Telegram bots cannot read group messages unless they are directly me
 4. If the bot is already in your group, **remove it and add it back** for the settings to apply.
 5. *(Recommended)*: Make the bot an administrator in the group and grant it permission to read messages.
 
-### 3. Getting Gemini API Key
-Obtain a free or paid API key from [Google AI Studio](https://aistudio.google.com/).
+### 3. Getting an LLM API Key
+For the default Gemini provider, obtain a free or paid API key from [Google AI Studio](https://aistudio.google.com/). Alternatively, set `LLM_PROVIDER=openai` and provide an `OPENAI_API_KEY` to use OpenAI or any OpenAI-compatible endpoint (see the LLM Provider settings below).
 
 ### 4. Advanced Configuration (Optional)
-You can configure rate limits, privacy modes, and whitelist specific chat IDs in your `.env` file to protect your Gemini API quota:
+You can choose the LLM provider, configure rate limits, privacy modes, and whitelist specific chat IDs in your `.env` file to protect your API quota:
+*   **LLM Provider**:
+    *   `LLM_PROVIDER`: `gemini` (default) or `openai`. When set to `openai`, the bot calls an OpenAI-compatible Chat Completions endpoint instead of the Gemini SDK.
+    *   `GEMINI_MODEL`: Override the Gemini model (defaults to `gemini-3.1-flash-lite`).
+    *   `OPENAI_API_KEY`: API key for the OpenAI-compatible provider (required when `LLM_PROVIDER=openai`).
+    *   `OPENAI_MODEL`: Model name for the OpenAI-compatible provider (defaults to `gpt-4o-mini`).
+    *   `OPENAI_BASE_URL`: Custom endpoint for OpenAI-compatible providers (defaults to `https://api.openai.com/v1`, no trailing slash needed). Works with OpenRouter, Together, local vLLM/Ollama servers, etc.
 *   **Rate Limiting**:
     *   `RATE_LIMIT_MAX_REQUESTS`: Set the maximum number of summarization requests allowed per chat in the window. Disabled if unset or set to `0`; invalid or negative values fail closed and block requests temporarily.
     *   `RATE_LIMIT_WINDOW_SEC`: The duration of the window in seconds (defaults to `3600` - 1 hour; invalid values fall back to `3600`).
@@ -129,7 +136,10 @@ node dist/main.js
     *   `@bot_username what was discussed today?`
     *   `@bot_username briefly for yesterday`
     *   `@bot_username summarization for the last 2 days`
+    *   `@bot_username summary for the last month`
     *   `@bot_username summarize last 30 minutes` (Russian queries like `суммаризуй за последний час` are also supported)
+
+*Supported intervals: minutes, hours, days, week, month, plus `today` and `yesterday`.*
 
 *Note: If the time period cannot be parsed, the bot defaults to summarizing the last 24 hours.*
 

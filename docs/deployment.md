@@ -1,6 +1,6 @@
 # Linux Deployment Guide
 
-This guide provides step-by-step instructions for deploying the Telegram Gemini Chat Summarizer Bot on Linux servers: **Debian/Ubuntu** (APT-based) and **AlmaLinux/Rocky Linux** (YUM/DNF-based).
+This guide provides step-by-step instructions for deploying the Telegram Chat Summarizer Bot on Linux servers: **Debian/Ubuntu** (APT-based) and **AlmaLinux/Rocky Linux** (YUM/DNF-based).
 
 ---
 
@@ -66,8 +66,16 @@ nano .env
 Fill in the configuration details:
 ```ini
 TELEGRAM_BOT_TOKEN=your_real_telegram_bot_token
+# LLM provider: 'gemini' (default) or 'openai' (any OpenAI-compatible API)
+# LLM_PROVIDER=gemini
+# Gemini provider (default):
 GEMINI_API_KEY=your_real_gemini_api_key
 # GOOGLE_API_KEY=your_real_google_api_key
+# GEMINI_MODEL=gemini-3.1-flash-lite
+# OpenAI-compatible provider (used when LLM_PROVIDER=openai):
+# OPENAI_API_KEY=your_real_openai_api_key
+# OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=https://api.openai.com/v1
 DB_PATH=/opt/telegram-summarizer-bot/data/bot_messages.db
 # DB_PATH values containing '..' are rejected on startup.
 # Timezone for date formatting in prompts. If invalid, the bot logs a warning on startup and falls back to UTC.
@@ -117,7 +125,7 @@ Paste the following configuration (replace `youruser` with the name of the syste
 
 ```ini
 [Unit]
-Description=Telegram Gemini Summarizer Bot
+Description=Telegram Chat Summarizer Bot
 After=network.target
 
 [Service]

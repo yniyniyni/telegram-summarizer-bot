@@ -93,7 +93,7 @@ ${transcript}
 </untrusted_transcript>
 ---
 `,
-  geminiError: (err) => `⚠️ Произошла ошибка при обращении к Gemini API: ${err}`,
+  geminiError: (err) => `⚠️ Произошла ошибка при обращении к ИИ-сервису: ${err}`,
   failedToGenerate: "Не удалось сгенерировать текст выжимки.",
   skippedMessages: (count) => `[Пропущено ${count} более старых текстовых сообщений из-за ограничения размера запроса.]`,
   citationInstruction:
@@ -103,14 +103,14 @@ ${transcript}
     "Используй только реальные номера сообщений из истории; не выдумывай номера.",
   messageLinkText: "к обсуждению",
 
-  gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
+  gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${escapeHTML(timeframeDesc)}</b> не найдено текстовых сообщений для анализа.`,
   failedToGenerateWithError: (err) => `❌ Не удалось сгенерировать выжимку из-за ошибки: <code>${err}</code>`,
   chatNotAuthorized: "⚠️ Этот чат не авторизован для использования бота.",
   rateLimited: (retryAfter) => `⚠️ Превышен лимит запросов. Пожалуйста, подождите ${retryAfter} сек. перед следующей попыткой.`,
   summarizationInProgress: "⚠️ Суммаризация для этого чата уже выполняется. Пожалуйста, подождите завершения текущего процесса.",
   welcomeMessage: (botUsername) => 
-    "👋 <b>Привет! Я Gemini Суммаризатор чатов.</b>\n\n" +
+    "👋 <b>Привет! Я бот-суммаризатор чатов.</b>\n\n" +
     "Чтобы сделать краткую выжимку переписки:\n" +
     "1. Добавьте меня в групповой чат.\n" +
     "2. Убедитесь, что у меня <b>отключена Group Privacy</b> (в настройках бота у @BotFather) " +
@@ -211,7 +211,7 @@ ${transcript}
 </untrusted_transcript>
 ---
 `,
-  geminiError: (err) => `⚠️ An error occurred while contacting Gemini API: ${err}`,
+  geminiError: (err) => `⚠️ An error occurred while contacting the AI service: ${err}`,
   failedToGenerate: "Failed to generate summary text.",
   skippedMessages: (count) => `[Skipped ${count} older text messages due to the prompt size limit.]`,
   citationInstruction:
@@ -221,14 +221,14 @@ ${transcript}
     "Use only real message ids from the transcript; do not invent ids.",
   messageLinkText: "to discussion",
 
-  gatheringMessages: "⏳ <b>Gathering messages and generating summary via Gemini...</b>",
+  gatheringMessages: "⏳ <b>Gathering messages and generating summary...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${escapeHTML(timeframeDesc)}</b>.`,
   failedToGenerateWithError: (err) => `❌ Failed to generate summary due to error: <code>${err}</code>`,
   chatNotAuthorized: "⚠️ This chat is not authorized to use this bot.",
   rateLimited: (retryAfter) => `⚠️ Rate limit exceeded. Please wait ${retryAfter}s before trying again.`,
   summarizationInProgress: "⚠️ Summarization for this chat is already in progress. Please wait for the current process to complete.",
   welcomeMessage: (botUsername) => 
-    "👋 <b>Hello! I am the Gemini Chat Summarizer Bot.</b>\n\n" +
+    "👋 <b>Hello! I am the Chat Summarizer Bot.</b>\n\n" +
     "To summarize group chat history:\n" +
     "1. Add me to a group chat.\n" +
     "2. Make sure <b>Group Privacy is disabled</b> in my @BotFather settings, " +

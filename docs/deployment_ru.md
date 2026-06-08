@@ -1,6 +1,6 @@
 # Руководство по развертыванию на Linux
 
-В этом руководстве приведены пошаговые инструкции по развертыванию Telegram Gemini Chat Summarizer Bot на серверах Linux: **Debian/Ubuntu** (на базе APT) и **AlmaLinux/Rocky Linux** (на базе YUM/DNF).
+В этом руководстве приведены пошаговые инструкции по развертыванию Telegram Chat Summarizer Bot на серверах Linux: **Debian/Ubuntu** (на базе APT) и **AlmaLinux/Rocky Linux** (на базе YUM/DNF).
 
 ---
 
@@ -66,8 +66,16 @@ nano .env
 Заполните настройки:
 ```ini
 TELEGRAM_BOT_TOKEN=ваш_токен_телеграм_бота
+# LLM-провайдер: 'gemini' (по умолчанию) или 'openai' (любой OpenAI-совместимый API)
+# LLM_PROVIDER=gemini
+# Провайдер Gemini (по умолчанию):
 GEMINI_API_KEY=ваш_ключ_gemini_api
 # GOOGLE_API_KEY=ваш_ключ_google_api
+# GEMINI_MODEL=gemini-3.1-flash-lite
+# OpenAI-совместимый провайдер (используется при LLM_PROVIDER=openai):
+# OPENAI_API_KEY=ваш_ключ_openai_api
+# OPENAI_MODEL=gpt-4o-mini
+# OPENAI_BASE_URL=https://api.openai.com/v1
 DB_PATH=/opt/telegram-summarizer-bot/data/bot_messages.db
 # Значения DB_PATH с '..' отклоняются при запуске.
 # Временная зона для форматирования дат в промптах. Если указана некорректная зона, бот запишет предупреждение в лог при запуске и переключится на UTC.
@@ -117,7 +125,7 @@ sudo nano /etc/systemd/system/telegram-bot.service
 
 ```ini
 [Unit]
-Description=Telegram Gemini Summarizer Bot
+Description=Telegram Chat Summarizer Bot
 After=network.target
 
 [Service]
