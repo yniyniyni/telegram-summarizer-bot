@@ -191,6 +191,23 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek };
   }
 
+  // 7. Month / "месяц"
+  const ruMonthsMatch = text.match(/(?<=^|[^а-яё])(\d+)\s*(месяц|месяца|месяцев|мес)(?=$|[^а-яё])/i);
+  const enMonthsMatch = text.match(/\b(\d+)\s*(month|months)\b/i);
+  if (ruMonthsMatch || enMonthsMatch) {
+    const match = ruMonthsMatch || enMonthsMatch;
+    if (match) {
+      const months = parseInt(match[1], 10);
+      return { sinceTs: now - (months * 30 * 24 * 3600), desc: locale.timeframeMonth(months) };
+    }
+  }
+  // Single month check
+  const ruMonthSingleMatch = /(?<=^|[^а-яё])(месяц|месяца|месяцев|мес)(?=$|[^а-яё])/i.test(text);
+  const enMonthSingleMatch = /\b(month|months)\b/i.test(text);
+  if (ruMonthSingleMatch || enMonthSingleMatch) {
+    return { sinceTs: now - (30 * 24 * 3600), desc: locale.timeframeMonthSingle };
+  }
+
   return { sinceTs: now - defaultSeconds, desc: defaultDesc };
 }
 

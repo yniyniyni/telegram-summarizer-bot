@@ -29,6 +29,8 @@ function runTestsForLanguage(lang: 'ru' | 'en'): void {
     ["за 5 дней", 5 * 24 * 3600, "последние 5 дней"],
     ["за последние сутки", 24 * 3600, "последние сутки"],
     ["суммаризуй за неделю", 7 * 24 * 3600, "последнюю неделю"],
+    ["суммаризуй за месяц", 30 * 24 * 3600, "последний месяц"],
+    ["за 2 месяца", 2 * 30 * 24 * 3600, "последние 2 месяца"],
   ] : [
     ["summarize the last 3 hours", 3 * 3600, "the last 3 hours"],
     ["summarize the last 1 hour", 3600, "the last 1 hour"],
@@ -38,6 +40,8 @@ function runTestsForLanguage(lang: 'ru' | 'en'): void {
     ["last 5 days", 5 * 24 * 3600, "the last 5 days"],
     ["for the last day", 24 * 3600, "the last day"],
     ["summarize for the last week", 7 * 24 * 3600, "the last week"],
+    ["summarize the last month", 30 * 24 * 3600, "the last month"],
+    ["last 2 months", 2 * 30 * 24 * 3600, "the last 2 months"],
   ];
 
   for (const [text, expectedDelta, expectedDesc] of tests) {

@@ -29,6 +29,8 @@ export interface Locales {
   timeframeToday: string;
   timeframeYesterday: string;
   timeframeWeek: string;
+  timeframeMonth: (months: number) => string;
+  timeframeMonthSingle: string;
 }
 
 export const COMMON_RULES = {
@@ -144,6 +146,16 @@ ${transcript}
   timeframeToday: "сегодня",
   timeframeYesterday: "вчера",
   timeframeWeek: "последнюю неделю",
+  timeframeMonth: (months) => {
+    if (months % 10 === 1 && months % 100 !== 11) {
+      return `последний ${months} месяц`;
+    } else if ([2, 3, 4].includes(months % 10) && ![12, 13, 14].includes(months % 100)) {
+      return `последние ${months} месяца`;
+    } else {
+      return `последние ${months} месяцев`;
+    }
+  },
+  timeframeMonthSingle: "последний месяц",
 };
 
 const enLocale: Locales = {
@@ -222,6 +234,8 @@ ${transcript}
   timeframeToday: "today",
   timeframeYesterday: "yesterday",
   timeframeWeek: "the last week",
+  timeframeMonth: (months) => months === 1 ? "the last 1 month" : `the last ${months} months`,
+  timeframeMonthSingle: "the last month",
 };
 
 /**
