@@ -4,7 +4,7 @@ import { getLocale } from './locales.js';
 import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
-export const MAX_TRANSCRIPT_CHARS = 120_000;
+export const MAX_TRANSCRIPT_CHARS = 1_000_000;
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
