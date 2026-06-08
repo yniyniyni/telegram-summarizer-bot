@@ -9,7 +9,9 @@ export interface Locales {
   geminiError: (err: string) => string;
   failedToGenerate: string;
   skippedMessages: (count: number) => string;
-  
+  citationInstruction: string;
+  messageLinkText: string;
+
   gatheringMessages: string;
   noTextMessagesForPeriod: (timeframeDesc: string) => string;
   failedToGenerateWithError: (err: string) => string;
@@ -94,7 +96,13 @@ ${transcript}
   geminiError: (err) => `⚠️ Произошла ошибка при обращении к Gemini API: ${err}`,
   failedToGenerate: "Не удалось сгенерировать текст выжимки.",
   skippedMessages: (count) => `[Пропущено ${count} более старых текстовых сообщений из-за ограничения размера запроса.]`,
-  
+  citationInstruction:
+    "Дополнительно: в истории каждая строка начинается с номера сообщения в формате [#<id> | ...]. " +
+    "В конце описания каждой темы в блоке «Основные темы обсуждения» добавь ровно один маркер источника в формате [src:<id>], " +
+    "где <id> — номер самого показательного сообщения этой темы. " +
+    "Используй только реальные номера сообщений из истории; не выдумывай номера.",
+  messageLinkText: "к обсуждению",
+
   gatheringMessages: "⏳ <b>Собираю сообщения и генерирую выжимку через Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 За период <b>${escapeHTML(timeframeDesc)}</b> не найдено текстовых сообщений для анализа.`,
   failedToGenerateWithError: (err) => `❌ Не удалось сгенерировать выжимку из-за ошибки: <code>${err}</code>`,
@@ -206,7 +214,13 @@ ${transcript}
   geminiError: (err) => `⚠️ An error occurred while contacting Gemini API: ${err}`,
   failedToGenerate: "Failed to generate summary text.",
   skippedMessages: (count) => `[Skipped ${count} older text messages due to the prompt size limit.]`,
-  
+  citationInstruction:
+    "Additionally: in the transcript, each line starts with a message id in the format [#<id> | ...]. " +
+    "At the end of each topic in the 'Main Topics of Discussion' section, add exactly one source marker in the format [src:<id>], " +
+    "where <id> is the id of the most representative message for that topic. " +
+    "Use only real message ids from the transcript; do not invent ids.",
+  messageLinkText: "to discussion",
+
   gatheringMessages: "⏳ <b>Gathering messages and generating summary via Gemini...</b>",
   noTextMessagesForPeriod: (timeframeDesc) => `📭 No text messages found for analysis during the period <b>${escapeHTML(timeframeDesc)}</b>.`,
   failedToGenerateWithError: (err) => `❌ Failed to generate summary due to error: <code>${err}</code>`,

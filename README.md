@@ -46,6 +46,8 @@ You can configure rate limits, privacy modes, and whitelist specific chat IDs in
     *   `ALLOW_ALL_CHATS`: Set to `true` to explicitly disable authorization checks and allow all chats. By default, authorization operates in a **fail-closed** mode: if `ALLOW_ALL_CHATS` is not `true` and both `ALLOWED_CHATS` and `ALLOWED_USERS` are empty or unset, all chats will be unauthorized by default.
 *   **PII Minimization**:
     *   `REDACT_USER_IDENTITIES`: Set to `true` to enable user identity redaction in transcripts. In this mode, real names and usernames in message headers and bodies are replaced with stable pseudonyms (e.g., `User 1`, `User 2`), and any other username mentions are replaced with `@user_redacted`.
+*   **Message Links**:
+    *   `INCLUDE_MESSAGE_LINKS`: Set to `true` to append one source-message link per topic in the "Main Topics of Discussion" section of each summary. Works only in private supergroups/channels (Telegram `t.me/c/…` links); basic groups and DMs are skipped automatically. Default: `false`. Independent of `REDACT_USER_IDENTITIES`.
 *   **Logging**:
     *   `DEBUG=true`, `DEBUG=1`, or `LOG_LEVEL=debug`: Enables debug logs. Non-debug logs are always printed.
 *   **Database path**:

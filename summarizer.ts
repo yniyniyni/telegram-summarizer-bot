@@ -22,6 +22,58 @@ export function getProvider(): LLMProvider {
     : 'gemini';
 }
 
+/**
+ * Whether to append source-message links to each topic in the summary.
+ * Opt-in; defaults to false for backward compatibility.
+ */
+export function linksEnabled(): boolean {
+  return (process.env.INCLUDE_MESSAGE_LINKS || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * A chat supports t.me/c/ message links only when it is a supergroup/channel
+ * (id of the form -100…). Basic groups and DMs have no message links.
+ */
+export function isLinkableChat(chatId: number): boolean {
+  return /^-100\d+$/.test(String(chatId));
+}
+
+/**
+ * Build a Telegram deep link to a specific message. Returns null for
+ * non-linkable chats. Includes the thread id for forum-topic messages.
+ */
+export function buildMessageLink(
+  chatId: number,
+  threadId: number | null,
+  messageId: number
+): string | null {
+  const match = String(chatId).match(/^-100(\d+)$/);
+  if (!match) return null;
+  const internal = match[1];
+  return threadId != null
+    ? `https://t.me/c/${internal}/${threadId}/${messageId}`
+    : `https://t.me/c/${internal}/${messageId}`;
+}
+
+/**
+ * Replace LLM-emitted [src:<id>] markers with Telegram HTML links. An id is
+ * linked only if it exists in messagesById AND the chat supports message links;
+ * any other marker (hallucinated / out-of-window / non-linkable chat) is removed.
+ */
+export function linkifyCitations(
+  html: string,
+  messagesById: Map<number, SavedMessage>
+): string {
+  const locale = getLocale();
+  return html.replace(/\s*\[src:\s*#?(\d+)\]/gi, (_match, idStr: string) => {
+    const msg = messagesById.get(Number(idStr));
+    if (!msg) return '';
+    const url = buildMessageLink(msg.chat_id, msg.thread_id, msg.message_id);
+    if (!url) return '';
+    return ` <a href="${url}">🔗 ${locale.messageLinkText}</a>`;
+  });
+}
+
 interface Target {
   regex: RegExp;
   pseudonym: string;
@@ -84,7 +136,7 @@ export function formatTimestamp(timestamp: number, timezone: string): string {
   }
 }
 
-function formatMessageLine(msg: SavedMessage, timezoneName: string): string | null {
+function formatMessageLine(msg: SavedMessage, timezoneName: string, includeIds = false): string | null {
   const locale = getLocale();
   const text = (msg.text || '').trim();
   if (!text) return null;
@@ -96,7 +148,8 @@ function formatMessageLine(msg: SavedMessage, timezoneName: string): string | nu
   const username = msg.username;
   const userInfo = username ? `${name} (@${username})` : name;
 
-  return `[${timeStr}] ${userInfo}: ${text}`;
+  const prefix = includeIds ? `#${msg.message_id} | ` : '';
+  return `[${prefix}${timeStr}] ${userInfo}: ${text}`;
 }
 
 function getSkippedMessagesLine(skippedCount: number): string {
@@ -113,7 +166,8 @@ function truncateLineToBudget(line: string, maxChars: number): string {
 export function buildBoundedTranscript(
   messages: SavedMessage[],
   timezoneName = 'Europe/Moscow',
-  maxChars = MAX_TRANSCRIPT_CHARS
+  maxChars = MAX_TRANSCRIPT_CHARS,
+  includeIds = false
 ): BoundedTranscript {
   const isRedact = process.env.REDACT_USER_IDENTITIES === 'true';
 
@@ -199,13 +253,14 @@ export function buildBoundedTranscript(
         const timeStr = formatTimestamp(msg.timestamp, timezoneName);
         const pseudonym = userIdToPseudonym.get(msg.user_id) || 'User Unknown';
 
-        return `[${timeStr}] ${pseudonym}: ${redactedText}`;
+        const prefix = includeIds ? `#${msg.message_id} | ` : '';
+        return `[${prefix}${timeStr}] ${pseudonym}: ${redactedText}`;
       })
       .filter((line): line is string => Boolean(line));
 
   } else {
     formattedLines = messages
-      .map((msg) => formatMessageLine(msg, timezoneName))
+      .map((msg) => formatMessageLine(msg, timezoneName, includeIds))
       .filter((line): line is string => Boolean(line));
   }
 
@@ -375,7 +430,10 @@ export async function summarizeMessages(
     return locale.noMessages;
   }
 
-  const { transcript, includedTextMessageCount, skippedTextMessageCount } = buildBoundedTranscript(messages, timezoneName);
+  const includeLinks = linksEnabled() && isLinkableChat(messages[0].chat_id);
+
+  const { transcript, includedTextMessageCount, skippedTextMessageCount } =
+    buildBoundedTranscript(messages, timezoneName, MAX_TRANSCRIPT_CHARS, includeLinks);
   if (!transcript) {
     return locale.noTextMessages;
   }
@@ -383,7 +441,9 @@ export async function summarizeMessages(
     log("INFO", `Gemini transcript was truncated: skipped ${skippedTextMessageCount} older text messages, included ${includedTextMessageCount}.`);
   }
 
-  const systemInstruction = locale.systemInstruction;
+  const systemInstruction = includeLinks
+    ? `${locale.systemInstruction}\n${locale.citationInstruction}`
+    : locale.systemInstruction;
   const userPrompt = locale.userPromptTemplate(timeframeDesc, includedTextMessageCount, transcript);
 
   const provider = getProvider();
@@ -392,7 +452,14 @@ export async function summarizeMessages(
       ? await generateWithOpenAI(systemInstruction, userPrompt)
       : await generateWithGemini(systemInstruction, userPrompt);
 
-    return summary || locale.failedToGenerate;
+    if (!summary) {
+      return locale.failedToGenerate;
+    }
+    if (!includeLinks) {
+      return summary;
+    }
+    const byId = new Map(messages.map((m) => [m.message_id, m]));
+    return linkifyCitations(summary, byId);
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     log("ERROR", `Error calling ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API: ${errMsg}`);

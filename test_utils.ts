@@ -77,6 +77,30 @@ function runTests(): void {
   assert.strictEqual(sanitizeHTML("<b>x"), "<b>x</b>");
   assert.strictEqual(sanitizeHTML("<b><i>x"), "<b><i>x</i></b>");
 
+  // Validated t.me anchors pass through with href preserved
+  assert.ok(
+    sanitizeHTML('x <a href="https://t.me/c/123/45">go</a> y').includes('<a href="https://t.me/c/123/45">go</a>'),
+    "t.me anchor href must be preserved"
+  );
+  // Non-t.me hrefs (e.g. javascript:) are dropped/escaped, not rendered
+  {
+    const jsAnchor = sanitizeHTML('<a href="javascript:alert(1)">x</a>');
+    assert.ok(!jsAnchor.includes('<a'), `javascript: anchor must not be rendered, got: ${jsAnchor}`);
+    assert.ok(jsAnchor.includes('x'), "visible text of dropped anchor preserved");
+  }
+  // Bare <a> without href must never be emitted
+  {
+    const bare = sanitizeHTML('<a>nohref</a>');
+    assert.ok(!/<a(\s|>)/.test(bare), `bare <a> must not be emitted, got: ${bare}`);
+    assert.ok(bare.includes('nohref'), "visible text of bare anchor preserved");
+  }
+  // Unclosed t.me anchor is auto-closed and balanced
+  {
+    const unclosed = sanitizeHTML('a <a href="https://t.me/x">b');
+    assert.ok(unclosed.includes('<a href="https://t.me/x">'), "unclosed t.me anchor opens");
+    assert.ok(unclosed.trimEnd().endsWith('</a>'), `unclosed t.me anchor must auto-close, got: ${unclosed}`);
+  }
+
   console.log("  Passed sanitizeHTML tests.");
 
   // 3. Test isChatAuthorized
@@ -367,6 +391,29 @@ function runTests(): void {
   const stdNested2 = splitHTMLText(standardNested, 20);
   assert.deepStrictEqual(stdNested2, ["<b><i>hello</i> </b>", "<b>world</b>"]);
   validateChunks(stdNested2, 20);
+
+  // Anchor spanning a chunk boundary: href must be preserved on reopen, never a bare <a>
+  {
+    const anchorText = "alpha beta gamma delta epsilon zeta";
+    const anchorHtml = 'pre text here <a href="https://t.me/c/1/2">' + anchorText + '</a> post text';
+    const anchorChunks = splitHTMLText(anchorHtml, 45);
+    assert.ok(anchorChunks.length > 1, `expected a split, got ${anchorChunks.length} chunk(s): ${JSON.stringify(anchorChunks)}`);
+    let sawReopenedAnchor = false;
+    for (const chunk of anchorChunks) {
+      // No bare <a> (an <a> not immediately followed by a space then href=)
+      const anchorOpens = chunk.match(/<a\b[^>]*>/g) || [];
+      for (const a of anchorOpens) {
+        assert.ok(/href="https:\/\/t\.me\//.test(a), `chunk has anchor without t.me href: ${a} in ${chunk}`);
+      }
+      // bare <a> (immediately closed with no href)
+      assert.ok(!/<a>/.test(chunk), `bare <a> found in chunk: ${chunk}`);
+    }
+    // At least one later chunk must have reopened the anchor with the full href
+    for (let ci = 1; ci < anchorChunks.length; ci++) {
+      if (anchorChunks[ci].includes('<a href="https://t.me/c/1/2">')) sawReopenedAnchor = true;
+    }
+    assert.ok(sawReopenedAnchor, `expected anchor reopened with href in a later chunk: ${JSON.stringify(anchorChunks)}`);
+  }
 
   console.log("  Passed splitHTMLText tests.");
 

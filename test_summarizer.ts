@@ -1,6 +1,15 @@
 import assert from 'assert';
-import { buildBoundedTranscript, getProvider, MAX_TRANSCRIPT_CHARS } from './summarizer.js';
+import {
+  buildBoundedTranscript,
+  getProvider,
+  MAX_TRANSCRIPT_CHARS,
+  linksEnabled,
+  isLinkableChat,
+  buildMessageLink,
+  linkifyCitations
+} from './summarizer.js';
 import { SavedMessage } from './db.js';
+import { sanitizeHTML } from './utils.js';
 import { getLocale, COMMON_RULES } from './locales.js';
 
 function makeMessage(messageId: number, text: string): SavedMessage {
@@ -210,6 +219,98 @@ function runTests(): void {
         process.env.LLM_PROVIDER = originalProvider;
       }
     }
+
+    console.log("Testing linksEnabled flag...");
+    const origLinks = process.env.INCLUDE_MESSAGE_LINKS;
+    try {
+      delete process.env.INCLUDE_MESSAGE_LINKS;
+      assert.strictEqual(linksEnabled(), false, "Default should be disabled");
+      process.env.INCLUDE_MESSAGE_LINKS = 'true';
+      assert.strictEqual(linksEnabled(), true, "'true' enables links");
+      process.env.INCLUDE_MESSAGE_LINKS = ' TRUE ';
+      assert.strictEqual(linksEnabled(), true, "Parsing trims and lowercases");
+      process.env.INCLUDE_MESSAGE_LINKS = 'false';
+      assert.strictEqual(linksEnabled(), false, "'false' disables links");
+    } finally {
+      if (origLinks === undefined) delete process.env.INCLUDE_MESSAGE_LINKS;
+      else process.env.INCLUDE_MESSAGE_LINKS = origLinks;
+    }
+
+    console.log("Testing isLinkableChat...");
+    assert.strictEqual(isLinkableChat(-1001234567890), true, "Supergroup is linkable");
+    assert.strictEqual(isLinkableChat(1), false, "Basic group id is not linkable");
+    assert.strictEqual(isLinkableChat(-12345), false, "Non -100 negative id is not linkable");
+
+    console.log("Testing buildMessageLink...");
+    assert.strictEqual(
+      buildMessageLink(-1001234567890, null, 55),
+      'https://t.me/c/1234567890/55',
+      "Supergroup link without thread"
+    );
+    assert.strictEqual(
+      buildMessageLink(-1001234567890, 7, 55),
+      'https://t.me/c/1234567890/7/55',
+      "Forum-topic link includes thread id"
+    );
+    assert.strictEqual(buildMessageLink(1, null, 55), null, "Basic group -> null");
+    assert.strictEqual(buildMessageLink(-12345, null, 55), null, "Non -100 id -> null");
+
+    console.log("Testing transcript id prefix toggling...");
+    process.env.BOT_LANGUAGE = 'en';
+    const idMsgs = [makeMessage(7001, 'hello world')];
+    const withIds = buildBoundedTranscript(idMsgs, 'UTC', 10_000, true);
+    assert.ok(withIds.transcript.includes('[#7001 | '), `Expected id prefix, got: ${withIds.transcript}`);
+    const withoutIds = buildBoundedTranscript(idMsgs, 'UTC', 10_000);
+    assert.ok(!withoutIds.transcript.includes('#7001'), `Expected no id prefix by default, got: ${withoutIds.transcript}`);
+
+    console.log("Testing citation locale strings...");
+    process.env.BOT_LANGUAGE = 'en';
+    assert.ok(getLocale().citationInstruction.includes('[src:'), "EN citationInstruction must explain the [src:<id>] marker");
+    assert.ok(getLocale().messageLinkText.length > 0, "EN messageLinkText must be non-empty");
+    process.env.BOT_LANGUAGE = 'ru';
+    assert.ok(getLocale().citationInstruction.includes('[src:'), "RU citationInstruction must explain the [src:<id>] marker");
+    assert.ok(getLocale().messageLinkText.length > 0, "RU messageLinkText must be non-empty");
+    process.env.BOT_LANGUAGE = 'en';
+
+    console.log("Testing linkifyCitations...");
+    process.env.BOT_LANGUAGE = 'en';
+    const linkMsg: SavedMessage = {
+      chat_id: -1001234567890, message_id: 999, user_id: 1, username: null,
+      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null
+    };
+    const byId = new Map<number, SavedMessage>([[linkMsg.message_id, linkMsg]]);
+
+    const linked = linkifyCitations('Topic summary. [src:999]', byId);
+    assert.ok(linked.includes('<a href="https://t.me/c/1234567890/999">'), `Expected anchor, got: ${linked}`);
+    assert.ok(linked.includes('to discussion'), `Expected EN link text, got: ${linked}`);
+    assert.ok(!linked.includes('[src:999]'), `Marker should be replaced, got: ${linked}`);
+
+    const stripped = linkifyCitations('Topic. [src:404]', byId);
+    assert.ok(!stripped.includes('[src:404]'), `Invalid marker should be stripped, got: ${stripped}`);
+    assert.ok(!stripped.includes('<a '), `No anchor for invalid id, got: ${stripped}`);
+
+    assert.strictEqual(linkifyCitations('Plain text.', byId), 'Plain text.', "No markers -> unchanged");
+
+    const threadMsg: SavedMessage = { ...linkMsg, message_id: 1000, thread_id: 42 };
+    const byId2 = new Map<number, SavedMessage>([[1000, threadMsg]]);
+    const threaded = linkifyCitations('Topic [src: #1000]', byId2);
+    assert.ok(
+      threaded.includes('https://t.me/c/1234567890/42/1000'),
+      `Expected thread link with tolerant parsing, got: ${threaded}`
+    );
+
+    console.log("Testing message link survives sanitizeHTML (integration)...");
+    process.env.BOT_LANGUAGE = 'en';
+    const intMsg: SavedMessage = {
+      chat_id: -1001234567890, message_id: 555, user_id: 1, username: null,
+      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null
+    };
+    const intById = new Map<number, SavedMessage>([[555, intMsg]]);
+    const sanitizedLinked = sanitizeHTML(linkifyCitations('Topic alpha. [src:555]', intById));
+    assert.ok(
+      sanitizedLinked.includes('<a href="https://t.me/c/1234567890/555">'),
+      `Link must survive sanitizeHTML, got: ${sanitizedLinked}`
+    );
 
     console.log("✅ All summarizer tests passed successfully!");
   } finally {

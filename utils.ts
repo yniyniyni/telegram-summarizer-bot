@@ -76,7 +76,7 @@ export function sanitizeHTML(input: string): string {
   const parts = convertedInput.split(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g);
   
   // Whitelisted tags that are safe for Telegram.
-  const allowedTags = new Set(['b', 'i', 'code', 'pre', '/b', '/i', '/code', '/pre']);
+  const allowedTags = new Set(['b', 'i', 'code', 'pre', '/b', '/i', '/code', '/pre', '/a']);
 
   const openTags: string[] = [];
 
@@ -87,7 +87,19 @@ export function sanitizeHTML(input: string): string {
       if (match) {
         const tagName = match[1].toLowerCase();
         const fullTagName = part.startsWith('</') ? `/${tagName}` : tagName;
-        
+
+        // Special-case anchor OPENING tags: only validated https://t.me/ links may pass.
+        // Any other anchor (other URLs, javascript:, or no href) is dropped and escaped as text.
+        if (tagName === 'a' && !part.startsWith('</')) {
+          const hrefMatch = part.match(/href\s*=\s*"([^"]*)"/i);
+          const href = hrefMatch ? hrefMatch[1] : '';
+          if (/^https:\/\/t\.me\//i.test(href)) {
+            openTags.push('a');
+            return `<a href="${escapeHTML(href)}">`;
+          }
+          return escapeHTML(part);
+        }
+
         if (allowedTags.has(fullTagName)) {
           const isClose = part.startsWith('</');
           if (isClose) {
@@ -358,12 +370,24 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
   const parts = text.split(/(<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>)/g);
   const chunks: string[] = [];
   let currentChunk = "";
-  const openTags: string[] = []; // Stack of currently open tags
+  // Stack of currently open tags. `open` is the full opening token (with any
+  // attributes, e.g. an anchor's href) so it can be reopened verbatim across
+  // chunk boundaries instead of emitting a bare/attribute-less tag.
+  const openTags: { name: string; open: string }[] = [];
+
+  // Find the index of the last open tag matching a given tag name.
+  const lastIndexByName = (name: string): number => {
+    for (let k = openTags.length - 1; k >= 0; k--) {
+      if (openTags[k].name === name) return k;
+    }
+    return -1;
+  };
+  const hasOpenTag = (name: string): boolean => openTags.some(t => t.name === name);
 
   // Helper to compute size of closing tags for openTags stack
-  const getCloseTagsString = () => openTags.map(tag => `</${tag}>`).reverse().join('');
+  const getCloseTagsString = () => openTags.map(t => `</${t.name}>`).reverse().join('');
   // Helper to compute size of opening tags for openTags stack
-  const getOpenTagsString = () => openTags.map(tag => `<${tag}>`).join('');
+  const getOpenTagsString = () => openTags.map(t => t.open).join('');
 
   const safePush = (chunk: string) => {
     // Only push if it has text content other than HTML tags
@@ -429,20 +453,26 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
             if (spaceLeft <= 0 || (!currentHasText && spaceLeft < maxLength / 2)) {
               if (currentHasText) {
                 safePush(currentChunk + currentCloseTags);
-              }
-              // Guard against infinite loop: if no text was pushed and
-              // spaceLeft <= 0, force at least 1 character of progress
-              if (!currentHasText && spaceLeft <= 0) {
-                const forceLen = Math.min(wordRemaining.length, Math.max(1, maxLength - currentOpenTags.length - currentCloseTags.length));
-                currentChunk = currentOpenTags + wordRemaining.substring(0, forceLen);
-                wordRemaining = wordRemaining.substring(forceLen);
-                if (wordRemaining.length > 0) {
-                  safePush(currentChunk + currentCloseTags);
-                  currentChunk = currentOpenTags;
-                }
+                currentChunk = currentOpenTags;
                 continue;
               }
-              currentChunk = currentOpenTags;
+              // No text content in the current chunk. Resetting to the reopened
+              // open-tags prefix would not change state (currentChunk already
+              // equals that prefix), so we must force at least 1 char of
+              // progress to avoid an infinite loop. This also covers the case
+              // where the open-tags prefix is large (e.g. an anchor with a long
+              // href) and leaves only a small amount of room (spaceLeft > 0 but
+              // below the maxLength/2 heuristic).
+              const forceLen = Math.min(
+                wordRemaining.length,
+                Math.max(1, maxLength - currentOpenTags.length - currentCloseTags.length)
+              );
+              currentChunk = currentOpenTags + wordRemaining.substring(0, forceLen);
+              wordRemaining = wordRemaining.substring(forceLen);
+              if (wordRemaining.length > 0) {
+                safePush(currentChunk + currentCloseTags);
+                currentChunk = currentOpenTags;
+              }
               continue;
             }
 
@@ -467,11 +497,11 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
     let tagOverhead = 0;
     if (isTag && tagName) {
       if (isCloseTag) {
-        if (openTags.includes(tagName)) {
+        if (hasOpenTag(tagName)) {
           tagOverhead = -part.length;
         }
       } else {
-        if (!openTags.includes(tagName)) {
+        if (!hasOpenTag(tagName)) {
           tagOverhead = `</${tagName}>`.length;
         }
       }
@@ -488,13 +518,13 @@ export function splitHTMLText(text: string, maxLength = 4000): string[] {
 
     if (isTag && tagName) {
       if (isCloseTag) {
-        const lastIdx = openTags.lastIndexOf(tagName);
+        const lastIdx = lastIndexByName(tagName);
         if (lastIdx !== -1) {
           openTags.splice(lastIdx, 1);
         }
       } else {
-        if (!openTags.includes(tagName)) {
-          openTags.push(tagName);
+        if (!hasOpenTag(tagName)) {
+          openTags.push({ name: tagName, open: part });
         }
       }
     }
