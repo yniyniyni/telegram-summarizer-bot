@@ -13,6 +13,14 @@ export interface SavedMessage {
   text: string;
   timestamp: number;
   thread_id: number | null;
+  media_type: string | null;
+  media_file_id: string | null;
+  media_path: string | null;
+  media_mime_type: string | null;
+  // Gemini Files API: cached uploaded-file URI and its unix-seconds expiry.
+  // Optional so existing SavedMessage literals (and pre-migration rows) stay valid.
+  media_file_uri?: string | null;
+  media_file_uri_expires?: number | null;
 }
 
 let dbPath = 'data/bot_messages.db';
@@ -81,8 +89,38 @@ export async function initDb(): Promise<void> {
     `);
 
     await instance.exec(`
-      CREATE INDEX IF NOT EXISTS idx_messages_chat_time 
+      CREATE INDEX IF NOT EXISTS idx_messages_chat_time
       ON messages (chat_id, timestamp)
+    `);
+
+    // Media columns migration (added 2026-06-22)
+    const existingCols = await instance.all<{ name: string }[]>(
+      "PRAGMA table_info(messages)"
+    );
+    const colNames = new Set(existingCols.map(c => c.name));
+
+    const mediaMigration = [
+      { name: 'media_type',       sql: "ALTER TABLE messages ADD COLUMN media_type TEXT" },
+      { name: 'media_file_id',    sql: "ALTER TABLE messages ADD COLUMN media_file_id TEXT" },
+      { name: 'media_path',       sql: "ALTER TABLE messages ADD COLUMN media_path TEXT" },
+      { name: 'media_mime_type',  sql: "ALTER TABLE messages ADD COLUMN media_mime_type TEXT" },
+      { name: 'media_file_uri',          sql: "ALTER TABLE messages ADD COLUMN media_file_uri TEXT" },
+      { name: 'media_file_uri_expires',  sql: "ALTER TABLE messages ADD COLUMN media_file_uri_expires INTEGER" },
+    ];
+
+    for (const col of mediaMigration) {
+      if (!colNames.has(col.name)) {
+        try {
+          await instance.exec(col.sql);
+        } catch (_err) {
+          // Column may already exist from a concurrent/previous partial migration
+        }
+      }
+    }
+
+    await instance.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_media
+      ON messages (chat_id, media_type, timestamp)
     `);
 
     dbInstance = instance;
@@ -109,7 +147,13 @@ export async function saveMessage({
   last_name = null,
   text,
   timestamp,
-  thread_id = null
+  thread_id = null,
+  media_type = null,
+  media_file_id = null,
+  media_path = null,
+  media_mime_type = null,
+  media_file_uri = null,
+  media_file_uri_expires = null,
 }: SavedMessage): Promise<void> {
   if (!dbInstance) {
     throw new Error("Database not initialized. Call initDb() first.");
@@ -117,9 +161,12 @@ export async function saveMessage({
 
   await dbInstance.run(
     `INSERT OR REPLACE INTO messages (
-      chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id]
+      chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+      media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+     media_type ?? null, media_file_id ?? null, media_path ?? null, media_mime_type ?? null,
+     media_file_uri ?? null, media_file_uri_expires ?? null]
   );
 }
 
@@ -138,7 +185,8 @@ export async function getMessages(
   }
 
   let subquery = `
-    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
+    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+           media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
     FROM messages
     WHERE chat_id = ? AND timestamp >= ?
   `;
@@ -163,7 +211,8 @@ export async function getMessages(
   params.push(limit);
 
   const query = `
-    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
+    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+           media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
     FROM (${subquery})
     ORDER BY timestamp ASC, message_id ASC
   `;
@@ -219,6 +268,95 @@ export async function cleanupOldMessages(days: number): Promise<number> {
     [cutoff]
   );
   return result.changes || 0;
+}
+
+/**
+ * Returns DISTINCT non-null media_path values for messages older than the specified
+ * number of days. Used before cleanup to identify files on disk that can be deleted.
+ */
+export async function getOldMediaPaths(days: number): Promise<string[]> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  const cutoff = Math.floor(Date.now() / 1000) - (days * 24 * 3600);
+  const rows = await dbInstance.all<{ media_path: string }[]>(
+    "SELECT DISTINCT media_path FROM messages WHERE timestamp < ? AND media_path IS NOT NULL",
+    [cutoff]
+  );
+  return rows.map(r => r.media_path).filter((p): p is string => p !== null && p !== '');
+}
+
+/**
+ * Returns the oldest records that have a non-null media_path, up to the given limit.
+ * Used to trim the oldest media files when storage is running low.
+ */
+export async function getOldestMediaRecords(limit: number): Promise<
+  Array<{ media_path: string | null; chat_id: number; message_id: number }>
+> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  const rows = await dbInstance.all<
+    { media_path: string; chat_id: number; message_id: number }[]
+  >(
+    "SELECT media_path, chat_id, message_id FROM messages WHERE media_path IS NOT NULL ORDER BY timestamp ASC LIMIT ?",
+    [limit]
+  );
+  return rows;
+}
+
+/**
+ * Sets media_path = NULL for all messages that have the given media_path value.
+ * Called after the file on disk has been deleted, to keep the DB consistent.
+ */
+export async function clearMediaPath(mediaPath: string): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_path = NULL WHERE media_path = ?",
+    [mediaPath]
+  );
+}
+
+/**
+ * Update media_path and media_mime_type for a specific message.
+ * Used by the async media download path: the message is saved first with
+ * media_path=NULL, then the download completes and updates the record.
+ */
+export async function setMediaPath(
+  chatId: number,
+  messageId: number,
+  mediaPath: string,
+  mediaMimeType: string,
+): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_path = ?, media_mime_type = ? WHERE chat_id = ? AND message_id = ?",
+    [mediaPath, mediaMimeType, chatId, messageId],
+  );
+}
+
+/**
+ * Cache a Gemini Files API URI (and its unix-seconds expiry) for a message,
+ * so subsequent summarizations within the 48h window can reuse the upload
+ * instead of re-uploading the local file.
+ */
+export async function setMediaFileUri(
+  chatId: number,
+  messageId: number,
+  fileUri: string,
+  expiresAt: number,
+): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_file_uri = ?, media_file_uri_expires = ? WHERE chat_id = ? AND message_id = ?",
+    [fileUri, expiresAt, chatId, messageId],
+  );
 }
 
 /**

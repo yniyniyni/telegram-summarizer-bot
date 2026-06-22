@@ -56,7 +56,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Hello world!",
       timestamp: now,
-      thread_id: null
+      thread_id: null,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
 
     // 3. Test retrieving messages
@@ -78,7 +82,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Past message",
       timestamp: now,
-      thread_id: null
+      thread_id: null,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
     await db.saveMessage({
       chat_id: 9999,
@@ -89,7 +97,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Future message",
       timestamp: now + 5,
-      thread_id: null
+      thread_id: null,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
     let boundedMessages = await db.getMessages(9999, now - 10, null, 5000, now + 2);
     assert.strictEqual(boundedMessages.length, 1, "Should retrieve only 1 message before untilTimestamp");
@@ -106,7 +118,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Hello world! (edited)",
       timestamp: now,
-      thread_id: null
+      thread_id: null,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
     messages = await db.getMessages(123, now - 10);
     assert.strictEqual(messages.length, 1, "Should still retrieve exactly 1 message (updates in place)");
@@ -123,7 +139,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Hello in thread 42!",
       timestamp: now,
-      thread_id: 42
+      thread_id: 42,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
     
     // Retrieve without thread ID / null (should return only thread_id: null message, which is "Hello world! (edited)")
@@ -148,7 +168,11 @@ async function runTests(): Promise<void> {
       last_name: "User",
       text: "Very old message",
       timestamp: oldTime,
-      thread_id: null
+      thread_id: null,
+      media_type: null,
+      media_file_id: null,
+      media_path: null,
+      media_mime_type: null,
     });
 
     // Verify both messages are in the db
@@ -181,7 +205,11 @@ async function runTests(): Promise<void> {
           last_name: "User",
           text: `Message ${i}`,
           timestamp: limitTimestampBase + i,
-          thread_id: null
+          thread_id: null,
+          media_type: null,
+          media_file_id: null,
+          media_path: null,
+          media_mime_type: null,
         });
       }
       await db.commitTransaction();

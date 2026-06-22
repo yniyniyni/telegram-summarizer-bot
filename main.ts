@@ -6,6 +6,7 @@ import * as db from './db.js';
 import * as summarizer from './summarizer.js';
 import { getLocale } from './locales.js';
 import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText, log, safeErrorForLog } from './utils.js';
+import * as media from './media.js';
 
 export interface TimeframeResult {
   sinceTs: number;
@@ -246,6 +247,13 @@ export function isBotMentioned(message: any, botUsername: string): boolean {
  */
 async function databaseCleanupLoop(): Promise<void> {
   try {
+    // Delete media files for old messages before DB cleanup
+    const oldPaths = await db.getOldMediaPaths(30);
+    if (oldPaths.length > 0) {
+      const deleted = media.deleteMediaFiles(oldPaths);
+      log("INFO", `Database cleanup: removed ${deleted} media files older than 30 days.`);
+    }
+
     const cleaned = await db.cleanupOldMessages(30);
     log("INFO", `Database cleanup: removed ${cleaned} messages older than 30 days.`);
   } catch (err) {
@@ -255,6 +263,8 @@ async function databaseCleanupLoop(): Promise<void> {
 
 /**
  * Saves incoming messages or updates edited messages in the database.
+ * When multimodal is enabled, detects photo/voice/video_note, downloads them
+ * via Telegram API, and persists media metadata alongside the message.
  */
 export async function logMessage(ctx: Context): Promise<void> {
   const message = ctx.message || ctx.editedMessage;
@@ -266,11 +276,32 @@ export async function logMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
-  if (!text) return;
+  const text: string = ('text' in message ? (message.text || '') : '') || ('caption' in message ? (message.caption || '') : '');
 
-  // Don't log bot command updates
-  if (text.startsWith('/')) return;
+  // Detect media (only when master switch is on)
+  let mediaType: string | null = null;
+  let mediaFileId: string | null = null;
+
+  if (media.multimodalEnabled()) {
+    if (media.imagesEnabled() && 'photo' in message && message.photo && message.photo.length > 0) {
+      // Pick largest photo (last in array)
+      const photo = message.photo[message.photo.length - 1];
+      mediaType = 'image';
+      mediaFileId = photo.file_id;
+    } else if (media.voiceEnabled() && 'voice' in message && message.voice) {
+      mediaType = 'voice';
+      mediaFileId = message.voice.file_id;
+    } else if (media.videoNoteEnabled() && 'video_note' in message && message.video_note) {
+      mediaType = 'video_note';
+      mediaFileId = message.video_note.file_id;
+    }
+  }
+
+  // Bail only if neither text nor media
+  if (!text && !mediaType) return;
+
+  // Skip commands (even with media — but media-only messages without /text are not commands)
+  if (text && text.startsWith('/')) return;
 
   const botUsername = ctx.botInfo?.username;
   if (botUsername && isBotMentioned(message, botUsername)) {
@@ -299,6 +330,8 @@ export async function logMessage(ctx: Context): Promise<void> {
 
   const thread_id = ('message_thread_id' in message ? message.message_thread_id : null) || null;
 
+  // ── Phase 1 (synchronous): persist message metadata immediately ──
+  // Save first so the middleware chain is never blocked on network I/O.
   await db.saveMessage({
     chat_id,
     message_id,
@@ -308,8 +341,48 @@ export async function logMessage(ctx: Context): Promise<void> {
     last_name,
     text,
     timestamp,
-    thread_id
+    thread_id,
+    media_type: mediaType,
+    media_file_id: mediaFileId,
+    media_path: null,           // filled in by the async download below
+    media_mime_type: null,
   });
+
+  // ── Phase 2 (async, fire-and-forget): download media, then update DB ──
+  if (mediaType && mediaFileId && ctx.telegram) {
+    const botToken = ctx.telegram.token;
+    // Capture plain values — don't reference ctx inside the async IIFE.
+    const _chatId = chat_id;
+    const _messageId = message_id;
+    const _mediaType = mediaType;
+    const _mediaFileId = mediaFileId;
+
+    // This runs in the background and must NOT be awaited.
+    (async () => {
+      try {
+        const result = await media.downloadMedia(botToken, _mediaFileId, _chatId, _messageId, _mediaType);
+        if (result) {
+          await db.setMediaPath(_chatId, _messageId, result.path, result.mimeType);
+
+          // Enforce storage limit after a successful download
+          const maxMb = media.getStorageMaxMb();
+          try {
+            const oldest = await db.getOldestMediaRecords(100);
+            const deleted = media.enforceStorageLimit(oldest, maxMb);
+            if (deleted.length > 0) {
+              for (const p of deleted) {
+                try { await db.clearMediaPath(p); } catch (_) { /* best effort */ }
+              }
+            }
+          } catch (err) {
+            log("WARN", `Storage limit enforcement failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      } catch (err) {
+        log("WARN", `Async media download failed for msg ${_messageId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
 }
 
 const activeLocks = new Set<number>();
@@ -373,7 +446,12 @@ async function runSummarization(ctx: Context): Promise<void> {
         log("DEBUG", `Analyzing ${filteredMessages.length} messages...`);
       }
 
-      if (filteredMessages.length === 0) {
+      // Check if there are ANY messages (text or media) to summarize
+      const hasAnyContent = filteredMessages.some(m =>
+        (m.text && m.text.trim()) || (m.media_type && m.media_path)
+      );
+
+      if (!hasAnyContent) {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           statusMessage.message_id,
@@ -384,7 +462,7 @@ async function runSummarization(ctx: Context): Promise<void> {
         return;
       }
 
-      const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
+      const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz, text);
       const summaryText = sanitizeHTML(rawSummaryText);
 
       const maxLength = 4000;
@@ -512,6 +590,16 @@ async function startBot(): Promise<void> {
 
   // Check fail-closed mode on startup
   checkFailClosedMode();
+
+  // Multimodal + OpenAI compatibility warning
+  if (media.multimodalEnabled() && summarizer.getProvider() === 'openai') {
+    log("INFO", "Multimodal is enabled but LLM_PROVIDER=openai does not support native multimodal input. Media will be reduced to text placeholders.");
+  }
+
+  // Multimodal without Gemini API key
+  if (media.multimodalEnabled() && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+    log("WARN", "Multimodal is enabled but no Gemini API key is configured. Media will be logged but cannot be sent to the LLM. Set GEMINI_API_KEY or GOOGLE_API_KEY.");
+  }
 
   log("INFO", "Initializing SQLite database...");
   const rawDbPath = process.env.DB_PATH || 'data/bot_messages.db';

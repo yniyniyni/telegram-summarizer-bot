@@ -22,7 +22,11 @@ function makeMessage(messageId: number, text: string): SavedMessage {
     last_name: null,
     text,
     timestamp: 1_700_000_000 + messageId,
-    thread_id: null
+    thread_id: null,
+    media_type: null,
+    media_file_id: null,
+    media_path: null,
+    media_mime_type: null,
   };
 }
 
@@ -104,7 +108,11 @@ function runTests(): void {
         last_name: 'Иванов',
         text: 'Привет от Иван Иванов, напиши ivan_coder или @ivan_coder. И еще напиши @another_user.',
         timestamp: 1700000000,
-        thread_id: null
+        thread_id: null,
+        media_type: null,
+        media_file_id: null,
+        media_path: null,
+        media_mime_type: null,
       },
       {
         chat_id: 1,
@@ -115,7 +123,11 @@ function runTests(): void {
         last_name: 'Smith',
         text: 'Hello, this is Alice Smith speaking to @ivan_coder and ivan_coder.',
         timestamp: 1700000001,
-        thread_id: null
+        thread_id: null,
+        media_type: null,
+        media_file_id: null,
+        media_path: null,
+        media_mime_type: null,
       }
     ];
 
@@ -145,7 +157,11 @@ function runTests(): void {
         last_name: 'Lu',
         text: 'Hello Li Lu. Welcome to the Library. Contact @ivan_coder for help. Also check @ivan_coder_backup.',
         timestamp: 1700000000,
-        thread_id: null
+        thread_id: null,
+        media_type: null,
+        media_file_id: null,
+        media_path: null,
+        media_mime_type: null,
       },
       {
         chat_id: 1,
@@ -156,7 +172,11 @@ function runTests(): void {
         last_name: 'Иванов',
         text: 'Привет от Иван Иванов!',
         timestamp: 1700000001,
-        thread_id: null
+        thread_id: null,
+        media_type: null,
+        media_file_id: null,
+        media_path: null,
+        media_mime_type: null,
       },
       {
         chat_id: 1,
@@ -167,7 +187,11 @@ function runTests(): void {
         last_name: null,
         text: 'My name is Bo, I study in Boston.',
         timestamp: 1700000002,
-        thread_id: null
+        thread_id: null,
+        media_type: null,
+        media_file_id: null,
+        media_path: null,
+        media_mime_type: null,
       }
     ];
 
@@ -276,7 +300,8 @@ function runTests(): void {
     process.env.BOT_LANGUAGE = 'en';
     const linkMsg: SavedMessage = {
       chat_id: -1001234567890, message_id: 999, user_id: 1, username: null,
-      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null
+      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null,
+      media_type: null, media_file_id: null, media_path: null, media_mime_type: null,
     };
     const byId = new Map<number, SavedMessage>([[linkMsg.message_id, linkMsg]]);
 
@@ -303,7 +328,8 @@ function runTests(): void {
     process.env.BOT_LANGUAGE = 'en';
     const intMsg: SavedMessage = {
       chat_id: -1001234567890, message_id: 555, user_id: 1, username: null,
-      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null
+      first_name: 'A', last_name: null, text: 'x', timestamp: 1700000000, thread_id: null,
+      media_type: null, media_file_id: null, media_path: null, media_mime_type: null,
     };
     const intById = new Map<number, SavedMessage>([[555, intMsg]]);
     const sanitizedLinked = sanitizeHTML(linkifyCitations('Topic alpha. [src:555]', intById));

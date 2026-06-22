@@ -33,6 +33,12 @@ export interface Locales {
   timeframeWeek: string;
   timeframeMonth: (months: number) => string;
   timeframeMonthSingle: string;
+
+  // Media placeholders
+  photoAttached: string;
+  voiceAttached: string;
+  videoNoteAttached: string;
+  mediaWarn: string;
 }
 
 export const COMMON_RULES = {
@@ -164,6 +170,11 @@ ${transcript}
     }
   },
   timeframeMonthSingle: "последний месяц",
+
+  photoAttached: '[приложено фото]',
+  voiceAttached: '[голосовое сообщение]',
+  videoNoteAttached: '[видеосообщение]',
+  mediaWarn: '⚠️ Внимание: медиа не поддерживается с текущим LLM-провайдером, описания медиа не включены.',
 };
 
 const enLocale: Locales = {
@@ -250,6 +261,11 @@ ${transcript}
   timeframeWeek: "the last week",
   timeframeMonth: (months) => months === 1 ? "the last 1 month" : `the last ${months} months`,
   timeframeMonthSingle: "the last month",
+
+  photoAttached: '[photo attached]',
+  voiceAttached: '[voice message]',
+  videoNoteAttached: '[video message]',
+  mediaWarn: '⚠️ Note: media is not supported with the current LLM provider, media descriptions are not included.',
 };
 
 /**
