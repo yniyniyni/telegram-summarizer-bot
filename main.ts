@@ -431,7 +431,8 @@ export function parseDeepDiveRequest(
   // 1. Remove the target bot's @mention only — keep other @mentions
   //    like @sarah or @devteam as user-intended question context.
   if (botUsername) {
-    remaining = remaining.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
+    // Boundary-aware: @mybot(?![A-Za-z0-9_]) does NOT match @mybot_admin.
+    remaining = remaining.replace(new RegExp(`@${botUsername}(?![A-Za-z0-9_])\\s*`, 'gi'), '').trim();
   } else {
     remaining = remaining.replace(/@\w+\s*/g, '').trim();
   }
@@ -884,10 +885,14 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
         await runDeepDive(ctx, timeframe, question);
         return;
       }
-      // If no question detected, save the parsed timeframe for summarization fallback
-      // to avoid double-parsing in runSummarization.
-      await runSummarization(ctx, timeframe);
-      return;
+      // No question detected. In group chats, a @mention always means
+      // summarization — do it with the pre-parsed timeframe.  In private
+      // chats, fall through to the trigger-keyword gate below so that
+      // casual greetings still get the welcome message.
+      if (!isPrivate) {
+        await runSummarization(ctx, timeframe);
+        return;
+      }
     }
 
     // In group chats, a @mention always triggers summarization (that's the bot's purpose).

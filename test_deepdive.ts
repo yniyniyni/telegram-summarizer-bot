@@ -126,6 +126,33 @@ test('strips bot mention case-insensitively', () => {
   assert.equal(result, 'расскажи про миграцию');
 });
 
+test('bot mention regex is boundary-aware — does NOT strip @mybot_prefix', () => {
+  // @mybot should not match inside @mybot_admin due to negative lookahead.
+  const result = parseDeepDiveRequest(
+    '@mybot @mybot_admin расскажи про деплой',
+    { sinceTs: 0, desc: '', explicit: false },
+    'mybot'
+  );
+  assert.ok(result !== null);
+  // @mybot_admin must be preserved intact, not corrupted to _admin.
+  assert.ok(result!.includes('@mybot_admin'), 'other user mention must be preserved intact');
+  // The standalone @mybot mention itself (followed by space or end) should be gone.
+  assert.ok(!result!.includes('@mybot '), 'standalone bot mention should be stripped');
+});
+
+test('parseDeepDiveRequest with botUsername=undefined falls back to global @mention strip', () => {
+  // Without botUsername, all @mentions are stripped — this is the legacy path.
+  const result = parseDeepDiveRequest(
+    '@mybot @sarah расскажи про встречу',
+    { sinceTs: 0, desc: '', explicit: false }
+    // no botUsername arg
+  );
+  assert.ok(result !== null);
+  assert.ok(!result!.includes('@mybot'));
+  assert.ok(!result!.includes('@sarah'));
+  assert.ok(result!.includes('расскажи про встречу'));
+});
+
 // --- Short question rejection ---
 
 test('question shorter than 3 chars returns null', () => {
@@ -342,6 +369,36 @@ test('deepDivePrompt without cached summary has no summary section', () => {
   );
   assert.ok(!prompt.includes('Previous summary'));
   assert.ok(!prompt.includes('Предыдущая суммаризация'));
+});
+
+test('cached summary is inside <untrusted_transcript> boundary', () => {
+  const locale = loc.getLocale();
+  const cachedText = 'Some cached summary content';
+  const prompt = locale.deepDivePrompt(
+    'расскажи подробнее',
+    'последние сутки',
+    '[2026-01-01 12:00:00] User1: something',
+    cachedText
+  );
+  // Verify the cached summary appears AFTER the <untrusted_transcript> open tag
+  // and BEFORE the </untrusted_transcript> close tag.
+  const untrustedStart = prompt.indexOf('<untrusted_transcript>');
+  const untrustedEnd = prompt.indexOf('</untrusted_transcript>');
+  const cachedPos = prompt.indexOf('Some cached summary content');
+  assert.ok(untrustedStart > 0);
+  assert.ok(untrustedEnd > untrustedStart);
+  assert.ok(cachedPos > untrustedStart, 'cached summary must be inside untrusted_transcript');
+  assert.ok(cachedPos < untrustedEnd, 'cached summary must be inside untrusted_transcript');
+});
+
+test('parseDeepDiveRequest returns null for casual greeting "привет"', () => {
+  // "привет" has no interrogative markers — deep-dive should not trigger.
+  // In private chat with deep-dive enabled, this means the welcome gate is reached.
+  const result = parseDeepDiveRequest(
+    'привет',
+    { sinceTs: 0, desc: '', explicit: false }
+  );
+  assert.equal(result, null);
 });
 
 // --- Async: parseDeepDiveRequest + timeframe parsing integration ---

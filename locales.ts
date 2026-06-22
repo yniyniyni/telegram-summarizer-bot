@@ -189,12 +189,11 @@ ${transcript}
 Пользователь задал вопрос: «${question}»
 
 Контекст: сообщения чата за период ${periodDesc}.
-${cachedSummary ? `\nПредыдущая суммаризация за этот период:\n---\n${cachedSummary}\n---\n` : ''}
 
 Вот история сообщений:
 ---
 <untrusted_transcript>
-${transcript}
+${cachedSummary ? `Предыдущая суммаризация за этот период:\n---\n${cachedSummary}\n---\n\n` : ''}${transcript}
 </untrusted_transcript>
 ---
 
@@ -313,12 +312,11 @@ ${transcript}
 The user asked: "${question}"
 
 Context: chat messages for the period ${periodDesc}.
-${cachedSummary ? `\nPrevious summary for this period:\n---\n${cachedSummary}\n---\n` : ''}
 
 Here is the message history:
 ---
 <untrusted_transcript>
-${transcript}
+${cachedSummary ? `Previous summary for this period:\n---\n${cachedSummary}\n---\n\n` : ''}${transcript}
 </untrusted_transcript>
 ---
 
