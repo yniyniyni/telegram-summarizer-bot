@@ -39,6 +39,10 @@ export interface Locales {
   voiceAttached: string;
   videoNoteAttached: string;
   mediaWarn: string;
+  deepDiveSystemInstruction: string;
+  deepDivePrompt: (question: string, periodDesc: string, transcript: string, cachedSummary?: string) => string;
+  deepDiveNoContext: string;
+  deepDiveGeneratingContext: string;
 }
 
 export const COMMON_RULES = {
@@ -175,6 +179,39 @@ ${transcript}
   voiceAttached: '[голосовое сообщение]',
   videoNoteAttached: '[видеосообщение]',
   mediaWarn: '⚠️ Внимание: медиа не поддерживается с текущим LLM-провайдером, описания медиа не включены.',
+
+  deepDiveSystemInstruction:
+    "Ты — эксперт-аналитик чатов Telegram. Пользователь задаёт конкретный вопрос по истории обсуждений. " +
+    "Твоя задача: дать развёрнутый, содержательный и структурированный ответ на русском языке, опираясь ТОЛЬКО на предоставленную историю сообщений (и, если есть, предыдущую суммаризацию). " +
+    "Не придумывай факты. Если в истории недостаточно данных для полного ответа — честно скажи об этом, но дай максимум информации по имеющимся данным.",
+
+  deepDivePrompt: (question, periodDesc, transcript, cachedSummary) => `
+Пользователь задал вопрос: «${question}»
+
+Контекст: сообщения чата за период ${periodDesc}.
+${cachedSummary ? `\nПредыдущая суммаризация за этот период:\n---\n${cachedSummary}\n---\n` : ''}
+
+Вот история сообщений:
+---
+<untrusted_transcript>
+${transcript}
+</untrusted_transcript>
+---
+
+Ответь на вопрос пользователя на русском языке.
+Формат: используй HTML-разметку Telegram: <b>жирный</b>, <i>курсив</i>, <code>моноширинный</code>.
+- Начни с прямого ответа на вопрос.
+- Затем приведи подтверждающие факты из истории (краткие, без дословного повторения длинных сообщений).
+- Если есть связанные темы — упомяни их.
+- Если вопрос касается решений или договорённостей — выдели их отдельно.
+${COMMON_RULES.ru.html}
+${COMMON_RULES.ru.noHallucinations}
+${COMMON_RULES.ru.untrustedTranscript}
+`,
+
+  deepDiveNoContext: "Не удалось найти сообщения для ответа на вопрос.",
+
+  deepDiveGeneratingContext: "⏳ <b>Анализирую историю и готовлю ответ...</b>",
 };
 
 const enLocale: Locales = {
@@ -266,6 +303,39 @@ ${transcript}
   voiceAttached: '[voice message]',
   videoNoteAttached: '[video message]',
   mediaWarn: '⚠️ Note: media is not supported with the current LLM provider, media descriptions are not included.',
+
+  deepDiveSystemInstruction:
+    "You are an expert Telegram chat analyst. The user is asking a specific question about the discussion history. " +
+    "Your task: provide a thorough, informative, and structured answer in English, based ONLY on the provided message history (and the previous summary, if available). " +
+    "Do not invent facts. If the history lacks sufficient data for a complete answer — honestly say so, but give maximum information from the available data.",
+
+  deepDivePrompt: (question, periodDesc, transcript, cachedSummary) => `
+The user asked: "${question}"
+
+Context: chat messages for the period ${periodDesc}.
+${cachedSummary ? `\nPrevious summary for this period:\n---\n${cachedSummary}\n---\n` : ''}
+
+Here is the message history:
+---
+<untrusted_transcript>
+${transcript}
+</untrusted_transcript>
+---
+
+Answer the user's question in English.
+Format: use Telegram HTML markup: <b>bold</b>, <i>italic</i>, <code>monospace</code>.
+- Start with a direct answer to the question.
+- Then provide supporting facts from the history (brief, no verbatim repetition of long messages).
+- If there are related topics — mention them.
+- If the question concerns decisions or agreements — highlight them separately.
+${COMMON_RULES.en.html}
+${COMMON_RULES.en.noHallucinations}
+${COMMON_RULES.en.untrustedTranscript}
+`,
+
+  deepDiveNoContext: "Could not find messages to answer the question.",
+
+  deepDiveGeneratingContext: "⏳ <b>Analyzing history and preparing answer...</b>",
 };
 
 /**
