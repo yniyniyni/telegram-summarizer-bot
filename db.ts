@@ -311,6 +311,26 @@ export async function clearMediaPath(mediaPath: string): Promise<void> {
 }
 
 /**
+ * Update media_path and media_mime_type for a specific message.
+ * Used by the async media download path: the message is saved first with
+ * media_path=NULL, then the download completes and updates the record.
+ */
+export async function setMediaPath(
+  chatId: number,
+  messageId: number,
+  mediaPath: string,
+  mediaMimeType: string,
+): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_path = ?, media_mime_type = ? WHERE chat_id = ? AND message_id = ?",
+    [mediaPath, mediaMimeType, chatId, messageId],
+  );
+}
+
+/**
  * Close the database connection. Useful for test teardowns.
  */
 export async function closeDb(): Promise<void> {

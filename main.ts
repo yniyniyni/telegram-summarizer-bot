@@ -281,8 +281,6 @@ export async function logMessage(ctx: Context): Promise<void> {
   // Detect media (only when master switch is on)
   let mediaType: string | null = null;
   let mediaFileId: string | null = null;
-  let mediaPath: string | null = null;
-  let mediaMimeType: string | null = null;
 
   if (media.multimodalEnabled()) {
     if (media.imagesEnabled() && 'photo' in message && message.photo && message.photo.length > 0) {
@@ -332,16 +330,8 @@ export async function logMessage(ctx: Context): Promise<void> {
 
   const thread_id = ('message_thread_id' in message ? message.message_thread_id : null) || null;
 
-  // Download media if detected
-  if (mediaType && mediaFileId && ctx.telegram) {
-    const botToken = ctx.telegram.token;
-    const result = await media.downloadMedia(botToken, mediaFileId, chat_id, message_id, mediaType);
-    if (result) {
-      mediaPath = result.path;
-      mediaMimeType = result.mimeType;
-    }
-  }
-
+  // ── Phase 1 (synchronous): persist message metadata immediately ──
+  // Save first so the middleware chain is never blocked on network I/O.
   await db.saveMessage({
     chat_id,
     message_id,
@@ -354,26 +344,44 @@ export async function logMessage(ctx: Context): Promise<void> {
     thread_id,
     media_type: mediaType,
     media_file_id: mediaFileId,
-    media_path: mediaPath,
-    media_mime_type: mediaMimeType,
+    media_path: null,           // filled in by the async download below
+    media_mime_type: null,
   });
 
-  // Enforce storage limit after every successful media save
-  if (mediaPath) {
-    const maxMb = media.getStorageMaxMb();
-    try {
-      const oldest = await db.getOldestMediaRecords(100);
-      const deleted = media.enforceStorageLimit(oldest, maxMb);
-      if (deleted.length > 0) {
-        for (const path of deleted) {
+  // ── Phase 2 (async, fire-and-forget): download media, then update DB ──
+  if (mediaType && mediaFileId && ctx.telegram) {
+    const botToken = ctx.telegram.token;
+    // Capture plain values — don't reference ctx inside the async IIFE.
+    const _chatId = chat_id;
+    const _messageId = message_id;
+    const _mediaType = mediaType;
+    const _mediaFileId = mediaFileId;
+
+    // This runs in the background and must NOT be awaited.
+    (async () => {
+      try {
+        const result = await media.downloadMedia(botToken, _mediaFileId, _chatId, _messageId, _mediaType);
+        if (result) {
+          await db.setMediaPath(_chatId, _messageId, result.path, result.mimeType);
+
+          // Enforce storage limit after a successful download
+          const maxMb = media.getStorageMaxMb();
           try {
-            await db.clearMediaPath(path);
-          } catch (_) { /* best effort */ }
+            const oldest = await db.getOldestMediaRecords(100);
+            const deleted = media.enforceStorageLimit(oldest, maxMb);
+            if (deleted.length > 0) {
+              for (const p of deleted) {
+                try { await db.clearMediaPath(p); } catch (_) { /* best effort */ }
+              }
+            }
+          } catch (err) {
+            log("WARN", `Storage limit enforcement failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
+      } catch (err) {
+        log("WARN", `Async media download failed for msg ${_messageId}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      log("WARN", `Storage limit enforcement failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    })();
   }
 }
 

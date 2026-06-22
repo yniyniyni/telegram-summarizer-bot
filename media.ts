@@ -159,6 +159,20 @@ export async function downloadMedia(
       log("WARN", `Failed to download media ${fileId}: HTTP ${downloadRes.status}`);
       return null;
     }
+
+    // 4b. Check Content-Length header BEFORE reading the body into memory.
+    // Telegram may omit file_size in the getFile response, so without this
+    // check we would allocate the full download (up to 20 MB Bot API limit)
+    // before rejecting it.
+    const contentLength = downloadRes.headers.get('content-length');
+    if (contentLength) {
+      const size = parseInt(contentLength, 10);
+      if (!isNaN(size) && !checkMediaSize(size, mediaType)) {
+        log("WARN", `Media file too large (Content-Length=${size} bytes) for type ${mediaType}, skipping download`);
+        return null;
+      }
+    }
+
     const buffer = Buffer.from(await downloadRes.arrayBuffer());
 
     // 5. Double-check actual size (Telegram may not report file_size)
@@ -259,13 +273,26 @@ export function enforceStorageLimit(
   const maxBytes = maxMb * 1_048_576;
   const deleted: string[] = [];
 
+  // Walk the disk ONCE to get the current total, then subtract each
+  // deleted file's size from the running total. Previously getTotalBytes()
+  // was called inside the loop, making this O(n × files_on_disk).
+  let currentTotal = getTotalBytes();
+
   for (const record of oldestFirst) {
-    if (getTotalBytes() <= maxBytes) break;
+    if (currentTotal <= maxBytes) break;
     if (!record.media_path) continue;
     const absPath = path.resolve(record.media_path);
     if (!absPath.startsWith(path.resolve(MEDIA_BASE_DIR))) continue;
     try {
       if (fs.existsSync(absPath)) {
+        // Stat before unlink — stat after unlink always fails.
+        try {
+          const fileSize = fs.statSync(absPath).size;
+          currentTotal -= fileSize;
+        } catch (_) {
+          // If stat fails mid-iteration, recalculate to avoid drift.
+          currentTotal = getTotalBytes();
+        }
         fs.unlinkSync(absPath);
         deleted.push(record.media_path);
       }
