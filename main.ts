@@ -12,6 +12,8 @@ export interface TimeframeResult {
   sinceTs: number;
   untilTs?: number;
   desc: string;
+  /** True when the user explicitly specified a timeframe; false for the default 24h fallback. */
+  explicit: boolean;
 }
 
 export function validateTimezone(timezone: string): boolean {
@@ -108,7 +110,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const hours = parseInt(match[1], 10);
       const desc = locale.timeframeHour(hours);
-      return { sinceTs: now - (hours * 3600), desc };
+      return { sinceTs: now - (hours * 3600), desc, explicit: true };
     }
   }
 
@@ -116,7 +118,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
   const ruHourSingleMatch = /(?<=^|[^а-яё])(час|часа|часов|ч)(?=$|[^а-яё])/i.test(text);
   const enHourSingleMatch = /\b(hour|hours|h)\b/i.test(text);
   if (ruHourSingleMatch || enHourSingleMatch) {
-    return { sinceTs: now - 3600, desc: locale.timeframeHourSingle };
+    return { sinceTs: now - 3600, desc: locale.timeframeHourSingle, explicit: true };
   }
 
   // 2. Match numeric minutes: "30 минут", "15 мин"
@@ -127,7 +129,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const mins = parseInt(match[1], 10);
       const desc = locale.timeframeMin(mins);
-      return { sinceTs: now - (mins * 60), desc };
+      return { sinceTs: now - (mins * 60), desc, explicit: true };
     }
   }
 
@@ -135,7 +137,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
   const ruMinSingleMatch = /(?<=^|[^а-яё])(минут|минута|минуты|минуту|мин)(?=$|[^а-яё])/i.test(text);
   const enMinSingleMatch = /\b(min|minute|minutes)\b/i.test(text);
   if (ruMinSingleMatch || enMinSingleMatch) {
-    return { sinceTs: now - 600, desc: locale.timeframeMinSingle };
+    return { sinceTs: now - 600, desc: locale.timeframeMinSingle, explicit: true };
   }
 
   // 3. Today / "сегодня" (from 00:00 of the current day in target timezone)
@@ -146,7 +148,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (midnightTs >= now) {
       midnightTs = now - defaultSeconds;
     }
-    return { sinceTs: midnightTs, desc: locale.timeframeToday };
+    return { sinceTs: midnightTs, desc: locale.timeframeToday, explicit: true };
   }
 
   // 4. Yesterday / "вчера" (from 00:00 of yesterday in target timezone)
@@ -158,7 +160,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     const tzString = new Date(yesterdayMiddayMs).toLocaleString('sv-SE', { timeZone: timezoneName });
     const [yesterdayDatePart] = tzString.split(' ');
     const yesterdayTs = getMidnightTimestampForDate(yesterdayDatePart, timezoneName);
-    return { sinceTs: yesterdayTs, untilTs: todayMidnightTs, desc: locale.timeframeYesterday };
+    return { sinceTs: yesterdayTs, untilTs: todayMidnightTs, desc: locale.timeframeYesterday, explicit: true };
   }
 
   // 5. Match numeric days: "3 дня", "5 дней"
@@ -169,27 +171,27 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const days = parseInt(match[1], 10);
       const desc = locale.timeframeDay(days);
-      return { sinceTs: now - (days * 24 * 3600), desc };
+      return { sinceTs: now - (days * 24 * 3600), desc, explicit: true };
     }
   }
 
   // Single days checks
   const ruSutkiMatch = /(?<=^|[^а-яё])(сутки|суток)(?=$|[^а-яё])/i.test(text);
   if (ruSutkiMatch) {
-    return { sinceTs: now - (24 * 3600), desc: locale.timeframe24h };
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframe24h, explicit: true };
   }
 
   const ruDaySingleMatch = /(?<=^|[^а-яё])(день)(?=$|[^а-яё])/i.test(text);
   const enDaySingleMatch = /\b(day)\b/i.test(text);
   if (ruDaySingleMatch || enDaySingleMatch) {
-    return { sinceTs: now - (24 * 3600), desc: locale.timeframeDaySingle };
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframeDaySingle, explicit: true };
   }
 
   // 6. Week / "неделя"
   const ruWeekMatch = /(?<=^|[^а-яё])(неделя|неделю|недели|недель|неделе)(?=$|[^а-яё])/i.test(text);
   const enWeekMatch = /\b(week|weeks)\b/i.test(text);
   if (ruWeekMatch || enWeekMatch) {
-    return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek };
+    return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek, explicit: true };
   }
 
   // 7. Month / "месяц"
@@ -199,17 +201,17 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     const match = ruMonthsMatch || enMonthsMatch;
     if (match) {
       const months = parseInt(match[1], 10);
-      return { sinceTs: now - (months * 30 * 24 * 3600), desc: locale.timeframeMonth(months) };
+      return { sinceTs: now - (months * 30 * 24 * 3600), desc: locale.timeframeMonth(months), explicit: true };
     }
   }
   // Single month check
   const ruMonthSingleMatch = /(?<=^|[^а-яё])(месяц|месяца|месяцев|мес)(?=$|[^а-яё])/i.test(text);
   const enMonthSingleMatch = /\b(month|months)\b/i.test(text);
   if (ruMonthSingleMatch || enMonthSingleMatch) {
-    return { sinceTs: now - (30 * 24 * 3600), desc: locale.timeframeMonthSingle };
+    return { sinceTs: now - (30 * 24 * 3600), desc: locale.timeframeMonthSingle, explicit: true };
   }
 
-  return { sinceTs: now - defaultSeconds, desc: defaultDesc };
+  return { sinceTs: now - defaultSeconds, desc: defaultDesc, explicit: false };
 }
 
 /**
@@ -402,8 +404,10 @@ export function deepDiveEnabled(): boolean {
 }
 
 // ── Interrogative markers ──
+// NOTE: '?' is intentionally omitted — bare '?' would match ANY polite `@bot summary?`
+// request and route summarization to deep-dive. Other markers (`что`, `how`, `why`, etc.)
+// already cover genuine questions.
 const INTERROGATIVE_MARKERS = [
-  '?',
   'как', 'что', 'почему', 'кто', 'когда', 'где', 'зачем', 'какой', 'какая', 'какие',
   'каков', 'расскажи', 'распиши', 'объясни', 'поясни', 'опиши', 'подробнее', 'углубись',
   'how', 'what', 'why', 'who', 'when', 'where', 'tell', 'explain', 'describe', 'elaborate',
@@ -443,8 +447,15 @@ export function parseDeepDiveRequest(
   }
 
   // 4. Remove numeric timeframe values
+  // English units — \b works because JS \w = [a-zA-Z0-9_]
   remaining = remaining.replace(
-    /\b\d+\s*(час|часа|часов|ч|минут|минуты|минуту|мин|день|дня|дней|дн|недел|неделю|недели|недель|месяц|месяца|месяцев|мес|hour|hours|h|min|minute|minutes|day|days|d|week|weeks|month|months)\b/gi,
+    /\b\d+\s*(hour|hours|h|min|minute|minutes|day|days|d|week|weeks|month|months)\b/gi,
+    ''
+  );
+  // Russian units — NO trailing \b because JS \b is ASCII-only and Cyrillic
+  // chars are \W, so \b after них never matches. Leading \b before \d+ still works.
+  remaining = remaining.replace(
+    /\b\d+\s*(час|часа|часов|ч|минут|минуты|минуту|мин|день|дня|дней|дн|недел|неделю|недели|недель|месяц|месяца|месяцев|мес)/gi,
     ''
   );
 
@@ -464,7 +475,7 @@ export function parseDeepDiveRequest(
 /**
  * Orchestrates fetching logs, invoking Gemini, and displaying the summary.
  */
-async function runSummarization(ctx: Context): Promise<void> {
+async function runSummarization(ctx: Context, preParsedTimeframe?: TimeframeResult): Promise<void> {
   const message = ctx.message;
   if (!message || !ctx.chat) return;
   
@@ -496,7 +507,8 @@ async function runSummarization(ctx: Context): Promise<void> {
     let statusMessage: any = null;
 
     try {
-      const { sinceTs, untilTs, desc: timeframeDesc } = parseTimeframe(text, tz);
+      const timeframe = preParsedTimeframe ?? parseTimeframe(text, tz);
+      const { sinceTs, untilTs, desc: timeframeDesc } = timeframe;
       log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Timeframe parsed: sinceTs=${sinceTs}, untilTs=${untilTs} (${timeframeDesc})`);
 
       statusMessage = await ctx.reply(
@@ -657,13 +669,13 @@ async function runDeepDive(
       let cachedSummary: string | undefined;
       let contextDesc: string;
 
-      if (timeframe.sinceTs !== undefined) {
-        // Scenario 2: timeframe specified — fetch messages for the period
+      if (timeframe.explicit) {
+        // Scenario: explicit timeframe — fetch messages for the period
         contextMessages = await db.getMessages(chatId, timeframe.sinceTs, threadId, 5000, timeframe.untilTs);
         contextDesc = timeframe.desc;
         cachedSummary = undefined;
       } else {
-        // Scenario 1: no timeframe — use cached summary + raw messages
+        // Scenario: no explicit timeframe — use cached summary + raw messages
         const cached = summaryCache.get(cacheKey);
         if (cached) {
           contextMessages = await db.getMessages(chatId, cached.sinceTs, threadId, 5000, cached.untilTs);
@@ -691,7 +703,7 @@ async function runDeepDive(
       );
 
       if (!hasAnyContent) {
-        await ctx.reply(locale.noTextMessagesForPeriod(contextDesc), replyOptions);
+        await ctx.reply(locale.deepDiveNoContext, replyOptions);
         return;
       }
 
@@ -825,6 +837,23 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
   const isMentioned = botUsername && isBotMentioned(message, botUsername);
 
   if (isPrivate || isMentioned) {
+    // ── Deep-dive routing (must be first — even before trigger-keyword gating
+    // in private chats, so questions like "расскажи про миграцию" reach deep-dive) ──
+    if (deepDiveEnabled()) {
+      const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
+      const timeframe = parseTimeframe(text, tz);
+      const question = parseDeepDiveRequest(text, timeframe);
+      if (question) {
+        log("INFO", `Deep-dive request detected: timeframe=${timeframe.desc || 'none'}, question="${question.slice(0, 100)}"`);
+        await runDeepDive(ctx, timeframe, question);
+        return;
+      }
+      // If no question detected, save the parsed timeframe for summarization fallback
+      // to avoid double-parsing in runSummarization.
+      await runSummarization(ctx, timeframe);
+      return;
+    }
+
     // In group chats, a @mention always triggers summarization (that's the bot's purpose).
     // In private chats, check for trigger keywords to distinguish summarization requests
     // from general greetings.
@@ -838,18 +867,6 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
           locale.welcomeMessage(botUsername || 'bot_username'),
           { parse_mode: 'HTML' }
         );
-        return;
-      }
-    }
-
-    // ── Deep-dive routing ──
-    if (deepDiveEnabled()) {
-      const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
-      const timeframe = parseTimeframe(text, tz);
-      const question = parseDeepDiveRequest(text, timeframe);
-      if (question) {
-        log("INFO", `Deep-dive request detected: timeframe=${timeframe.desc || 'none'}, question="${question.slice(0, 100)}"`);
-        await runDeepDive(ctx, timeframe, question);
         return;
       }
     }

@@ -33,24 +33,36 @@ test('deepDiveEnabled returns true when set', () => {
 test('detects question with "расскажи"', () => {
   const result = parseDeepDiveRequest(
     '@bot расскажи подробнее про миграцию',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, 'расскажи подробнее про миграцию');
 });
 
-test('detects question with "?"', () => {
+test('detects question with "что" (not bare "?")', () => {
+  // '?' is NO LONGER a standalone interrogative marker — standalone '?' would
+  // catch ANY polite "@bot summary?" request and route summarization to deep-dive.
+  // This test relies on "что" as the marker, not "?".
   const result = parseDeepDiveRequest(
     '@bot что обсуждали про деплой?',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.ok(result !== null);
   assert.ok(result!.includes('что обсуждали про деплой?'));
 });
 
+test('"?" alone does NOT trigger deep-dive on summary requests', () => {
+  // A polite "@bot суммаризуй?" should route to summarization, NOT deep-dive.
+  const result = parseDeepDiveRequest(
+    '@bot суммаризуй за 3 часа?',
+    { sinceTs: 0, desc: 'последние 3 часа', explicit: false }
+  );
+  assert.equal(result, null);
+});
+
 test('detects question with "how"', () => {
   const result = parseDeepDiveRequest(
     '@bot how did the migration go',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, 'how did the migration go');
 });
@@ -58,7 +70,7 @@ test('detects question with "how"', () => {
 test('detects "deep dive" as trigger', () => {
   const result = parseDeepDiveRequest(
     '@bot deep dive into the database changes',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, 'deep dive into the database changes');
 });
@@ -68,7 +80,7 @@ test('detects "deep dive" as trigger', () => {
 test('plain timeframe request returns null', () => {
   const result = parseDeepDiveRequest(
     '@bot суммаризуй за 3 часа',
-    { sinceTs: 0, desc: 'последние 3 часа' }
+    { sinceTs: 0, desc: 'последние 3 часа', explicit: false }
   );
   assert.equal(result, null);
 });
@@ -76,7 +88,7 @@ test('plain timeframe request returns null', () => {
 test('no interrogative markers returns null', () => {
   const result = parseDeepDiveRequest(
     '@bot миграция деплой база',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, null);
 });
@@ -86,7 +98,7 @@ test('no interrogative markers returns null', () => {
 test('removes @bot mention prefix', () => {
   const result = parseDeepDiveRequest(
     '@mybot расскажи про архитектуру',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, 'расскажи про архитектуру');
 });
@@ -96,7 +108,7 @@ test('removes @bot mention prefix', () => {
 test('question shorter than 3 chars returns null', () => {
   const result = parseDeepDiveRequest(
     '@bot чт',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.equal(result, null);
 });
@@ -104,7 +116,7 @@ test('question shorter than 3 chars returns null', () => {
 test('question of exactly 3 chars passes if has marker', () => {
   const result = parseDeepDiveRequest(
     '@bot как',
-    { sinceTs: 0, desc: '' }
+    { sinceTs: 0, desc: '', explicit: false }
   );
   assert.ok(result !== null);
 });
@@ -118,7 +130,7 @@ for (const marker of ENGLISH_MARKERS) {
   test(`EN marker "${marker}" detected`, () => {
     const result = parseDeepDiveRequest(
       `@bot ${marker} something interesting`,
-      { sinceTs: 0, desc: '' }
+      { sinceTs: 0, desc: '', explicit: false }
     );
     assert.ok(result !== null, `Expected "${marker}" to trigger deep-dive`);
   });
@@ -128,7 +140,7 @@ for (const marker of RUSSIAN_MARKERS) {
   test(`RU marker "${marker}" detected`, () => {
     const result = parseDeepDiveRequest(
       `@bot ${marker} что-то интересное`,
-      { sinceTs: 0, desc: '' }
+      { sinceTs: 0, desc: '', explicit: false }
     );
     assert.ok(result !== null, `Expected "${marker}" to trigger deep-dive`);
   });
@@ -174,6 +186,70 @@ test('summaryCache: overwrite on new summary', () => {
   summaryCache.set('-100123:0', second);
   assert.equal(summaryCache.get('-100123:0')!.html, 'second');
   summaryCache.clear();
+});
+
+// --- TimeframeResult.explicit flag ---
+
+test('parseTimeframe returns explicit: true for specific timeframe', () => {
+  const tz = 'UTC';
+  const now = 1700000000;
+  const result = parseTimeframe('за 3 часа', tz, now);
+  assert.equal(result.explicit, true);
+  assert.ok(result.sinceTs < now);
+});
+
+test('parseTimeframe returns explicit: true for "сегодня"', () => {
+  const tz = 'Europe/Moscow';
+  const result = parseTimeframe('сегодня', tz);
+  assert.equal(result.explicit, true);
+});
+
+test('parseTimeframe returns explicit: false for fallback', () => {
+  const tz = 'UTC';
+  const now = 1700000000;
+  const result = parseTimeframe('какая-то ерунда без таймфрейма', tz, now);
+  assert.equal(result.explicit, false);
+  assert.equal(result.desc, 'the last 24 hours');
+});
+
+// --- Cyrillic numeric timeframe stripping (regex fix) ---
+
+test('parseDeepDiveRequest strips Russian numeric timeframe and detects question', () => {
+  // The regex strips "3 часа" but leaves residual framing word "за" — the
+  // question IS still detected by the "расскажи" interrogative marker.
+  const result = parseDeepDiveRequest(
+    '@bot за 3 часа расскажи про миграцию',
+    { sinceTs: 0, desc: 'последние 3 часа', explicit: true }
+  );
+  assert.ok(result !== null);
+  assert.ok(result!.includes('расскажи про миграцию'));
+});
+
+test('parseDeepDiveRequest strips Russian numeric timeframe "5 минут"', () => {
+  const result = parseDeepDiveRequest(
+    '@bot за 5 минут что случилось',
+    { sinceTs: 0, desc: 'последние 5 минут', explicit: true }
+  );
+  assert.ok(result !== null);
+  assert.ok(result!.includes('что случилось'));
+});
+
+test('parseDeepDiveRequest strips English numeric timeframe "2 hours"', () => {
+  const result = parseDeepDiveRequest(
+    '@bot for the last 2 hours tell me what happened',
+    { sinceTs: 0, desc: 'the last 2 hours', explicit: true }
+  );
+  assert.ok(result !== null);
+  assert.ok(result!.includes('tell me what happened'));
+});
+
+test('parseDeepDiveRequest strips Russian "3 дня" numeric timeframe', () => {
+  const result = parseDeepDiveRequest(
+    '@bot за 3 дня расскажи про проект',
+    { sinceTs: 0, desc: 'последние 3 дня', explicit: true }
+  );
+  assert.ok(result !== null);
+  assert.ok(result!.includes('расскажи про проект'));
 });
 
 // --- Deep-dive prompt contains expected elements ---
