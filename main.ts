@@ -387,6 +387,80 @@ export async function logMessage(ctx: Context): Promise<void> {
 
 const activeLocks = new Set<number>();
 
+// ── Summary cache for deep-dive mode ──
+export interface CachedSummary {
+  html: string;
+  sinceTs: number;
+  untilTs?: number;
+  messageCount: number;
+  createdAt: number;
+}
+export const summaryCache = new Map<string, CachedSummary>();
+
+export function deepDiveEnabled(): boolean {
+  return (process.env.DEEP_DIVE_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
+// ── Interrogative markers ──
+const INTERROGATIVE_MARKERS = [
+  '?',
+  'как', 'что', 'почему', 'кто', 'когда', 'где', 'зачем', 'какой', 'какая', 'какие',
+  'каков', 'расскажи', 'распиши', 'объясни', 'поясни', 'опиши', 'подробнее', 'углубись',
+  'how', 'what', 'why', 'who', 'when', 'where', 'tell', 'explain', 'describe', 'elaborate',
+  'deep dive', 'detail', 'details', 'break down', 'dig into', 'look into',
+];
+
+// ── Deep-dive request parsing ──
+export function parseDeepDiveRequest(
+  text: string,
+  parsedTimeframe: TimeframeResult
+): string | null {
+  let remaining = text;
+
+  // 1. Remove @bot mention
+  remaining = remaining.replace(/@\w+\s*/g, '').trim();
+
+  // 2. Remove timeframe description phrase
+  if (parsedTimeframe.desc) {
+    const descIdx = remaining.toLowerCase().indexOf(parsedTimeframe.desc.toLowerCase());
+    if (descIdx !== -1) {
+      remaining = remaining.slice(0, descIdx) + remaining.slice(descIdx + parsedTimeframe.desc.length);
+    }
+  }
+
+  // 3. Remove common timeframe framing words
+  const timeFramingPhrases = [
+    'за последние', 'за последний', 'за последнюю', 'за последних',
+    'за прошедшие', 'за прошедший', 'за прошедшую',
+    'for the last', 'for last', 'in the last', 'in last',
+    'during the last', 'during last',
+  ];
+  for (const phrase of timeFramingPhrases) {
+    const idx = remaining.toLowerCase().indexOf(phrase.toLowerCase());
+    if (idx !== -1) {
+      remaining = remaining.slice(0, idx) + remaining.slice(idx + phrase.length);
+    }
+  }
+
+  // 4. Remove numeric timeframe values
+  remaining = remaining.replace(
+    /\b\d+\s*(час|часа|часов|ч|минут|минуты|минуту|мин|день|дня|дней|дн|недел|неделю|недели|недель|месяц|месяца|месяцев|мес|hour|hours|h|min|minute|minutes|day|days|d|week|weeks|month|months)\b/gi,
+    ''
+  );
+
+  remaining = remaining.trim();
+
+  // 5. Candidate too short
+  if (remaining.length < 3) return null;
+
+  // 6. Check interrogative markers
+  const lower = remaining.toLowerCase();
+  const hasMarker = INTERROGATIVE_MARKERS.some(m => lower.includes(m));
+  if (!hasMarker) return null;
+
+  return remaining;
+}
+
 /**
  * Orchestrates fetching logs, invoking Gemini, and displaying the summary.
  */
