@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { SavedMessage } from './db.js';
-import { getLocale } from './locales.js';
+import { getLocale, Locales } from './locales.js';
+import { shouldIncludeMedia, includeByDefault as mediaIncludeByDefault } from './media.js';
 import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
@@ -134,6 +137,109 @@ export function formatTimestamp(timestamp: number, timezone: string): string {
     // Fallback to UTC ISO string representation
     return new Date(timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19);
   }
+}
+
+export interface MultimodalContent {
+  contents: Array<{
+    role: string;
+    parts: Array<Record<string, unknown>>;
+  }>;
+  mediaCount: number;
+  skippedMediaCount: number;
+}
+
+/**
+ * Build a multimodal Gemini contents array with intermixed text and inline-data parts.
+ * Media is read from disk and base64-encoded. Only media types with includeFlags=true
+ * get inlineData parts; others get text placeholders only.
+ */
+export function buildMultimodalContents(
+  messages: SavedMessage[],
+  timeframeDesc: string,
+  timezoneName: string,
+  includeFlags: { images: boolean; voice: boolean; videoNote: boolean },
+  locale: Locales,
+  includeIds: boolean
+): MultimodalContent {
+  const parts: Array<Record<string, unknown>> = [];
+  let mediaCount = 0;
+  let skippedMediaCount = 0;
+
+  // Build text preamble (rules + instructions, without the transcript)
+  const preambleText = locale.userPromptTemplate(timeframeDesc, messages.length, '')
+    .replace('\n---\n<untrusted_transcript>\n\n</untrusted_transcript>\n---\n', '');
+
+  parts.push({ text: preambleText + '\n\nHere is the message history to analyze:\n---' });
+
+  // Walk messages in chronological order
+  for (const msg of messages) {
+    const hasMedia = !!(msg.media_type && msg.media_path);
+    let includeThisMedia = false;
+
+    if (hasMedia) {
+      switch (msg.media_type) {
+        case 'image':      includeThisMedia = includeFlags.images; break;
+        case 'voice':      includeThisMedia = includeFlags.voice; break;
+        case 'video_note': includeThisMedia = includeFlags.videoNote; break;
+      }
+    }
+
+    // Build text line for this message
+    let textLine = formatMessageLine(msg, timezoneName, includeIds);
+    if (!textLine) {
+      // No text — generate a line from metadata
+      const timeStr = formatTimestamp(msg.timestamp, timezoneName);
+      const firstName = msg.first_name || locale.noName;
+      const userInfo = firstName;
+      const prefix = includeIds ? `#${msg.message_id} | ` : '';
+      textLine = `[${prefix}${timeStr}] ${userInfo}: `;
+    }
+
+    // Append media placeholder to text line
+    if (hasMedia) {
+      switch (msg.media_type) {
+        case 'image':      textLine += ` ${locale.photoAttached}`; break;
+        case 'voice':      textLine += ` ${locale.voiceAttached}`; break;
+        case 'video_note': textLine += ` ${locale.videoNoteAttached}`; break;
+      }
+    }
+
+    parts.push({ text: textLine });
+
+    // Append inlineData part if media is included
+    if (hasMedia && includeThisMedia && msg.media_path) {
+      try {
+        const absPath = path.resolve(msg.media_path);
+        if (fs.existsSync(absPath)) {
+          const buffer = fs.readFileSync(absPath);
+          const base64 = buffer.toString('base64');
+          const mimeType = msg.media_mime_type || 'application/octet-stream';
+
+          parts.push({
+            inlineData: {
+              mimeType,
+              data: base64,
+            },
+          });
+          mediaCount++;
+        } else {
+          skippedMediaCount++;
+          log("DEBUG", `Media file not found on disk: ${msg.media_path}`);
+        }
+      } catch (err) {
+        skippedMediaCount++;
+        log("WARN", `Failed to read media file ${msg.media_path}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  parts.push({ text: '\n---\n' });
+
+  return {
+    contents: [{ role: 'user', parts }],
+    mediaCount,
+    skippedMediaCount,
+  };
 }
 
 function formatMessageLine(msg: SavedMessage, timezoneName: string, includeIds = false): string | null {
@@ -347,22 +453,30 @@ export function buildBoundedTranscript(
 
 /**
  * Generate a summary via the Google Gemini SDK.
+ * Accepts either a plain text prompt (string) or a multimodal contents array.
  */
-async function generateWithGemini(systemInstruction: string, userPrompt: string): Promise<string> {
+async function generateWithGemini(
+  systemInstruction: string,
+  userPromptOrContents: string | Array<{ role: string; parts: Array<Record<string, unknown>> }>
+): Promise<string> {
   const aiClient = getAIClient();
   const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 
   log("DEBUG", "==================== [GEMINI API REQUEST] ====================");
   log("DEBUG", `Model: ${model}`);
+  const isMultimodal = typeof userPromptOrContents !== 'string';
+  if (isMultimodal) {
+    log("DEBUG", `Multimodal request with ${(userPromptOrContents as any[])?.[0]?.parts?.length || 0} parts`);
+  }
   log("DEBUG", "=============================================================");
 
   const response = await aiClient.models.generateContent({
     model,
-    contents: userPrompt,
+    contents: userPromptOrContents,
     config: {
       systemInstruction,
-      temperature: 0.3
-    }
+      temperature: 0.3,
+    },
   });
 
   return response.text || '';
@@ -418,20 +532,68 @@ async function generateWithOpenAI(systemInstruction: string, userPrompt: string)
  * @param messages List of message objects.
  * @param timeframeDesc Description of timeframe range.
  * @param timezoneName Target timezone (e.g. Europe/Moscow).
+ * @param userRequestText Optional original user request text for media keyword detection.
  * @returns Structured summary.
  */
 export async function summarizeMessages(
-  messages: SavedMessage[], 
-  timeframeDesc: string, 
-  timezoneName = 'Europe/Moscow'
+  messages: SavedMessage[],
+  timeframeDesc: string,
+  timezoneName = 'Europe/Moscow',
+  userRequestText?: string
 ): Promise<string> {
   const locale = getLocale();
   if (!messages || messages.length === 0) {
     return locale.noMessages;
   }
 
+  const provider = getProvider();
   const includeLinks = linksEnabled() && isLinkableChat(messages[0].chat_id);
 
+  // ── Multimodal path: detect media and route if applicable ──
+  const hasMediaMessages = messages.some(m => m.media_type && m.media_path);
+
+  // Determine media include flags
+  let includeFlags: { images: boolean; voice: boolean; videoNote: boolean } = { images: false, voice: false, videoNote: false };
+  if (hasMediaMessages && provider === 'gemini') {
+    if (userRequestText) {
+      includeFlags = shouldIncludeMedia(userRequestText);
+    } else {
+      includeFlags = { images: mediaIncludeByDefault(), voice: mediaIncludeByDefault(), videoNote: mediaIncludeByDefault() };
+    }
+  }
+
+  const useMultimodal = hasMediaMessages && provider === 'gemini' &&
+    (includeFlags.images || includeFlags.voice || includeFlags.videoNote);
+
+  if (useMultimodal) {
+    const multimodal = buildMultimodalContents(
+      messages, timeframeDesc, timezoneName, includeFlags, locale, includeLinks
+    );
+    log("INFO", `Multimodal request: ${multimodal.mediaCount} media parts included, ${multimodal.skippedMediaCount} skipped.`);
+
+    const systemInstruction = includeLinks
+      ? `${locale.systemInstruction}\n${locale.citationInstruction}`
+      : locale.systemInstruction;
+
+    try {
+      const summary = await generateWithGemini(systemInstruction, multimodal.contents);
+      if (!summary) return locale.failedToGenerate;
+      if (!includeLinks) return summary;
+      const byId = new Map(messages.map((m) => [m.message_id, m]));
+      return linkifyCitations(summary, byId);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log("ERROR", `Error calling Gemini API (multimodal): ${errMsg}`);
+      return locale.geminiError(escapeHTML(errMsg));
+    }
+  }
+
+  // If media exists but provider is openai, warn
+  if (hasMediaMessages && provider === 'openai') {
+    log("WARN", "Media messages present but LLM_PROVIDER=openai — media will be text placeholders only.");
+  }
+
+  // ── Text-only path ──
   const { transcript, includedTextMessageCount, skippedTextMessageCount } =
     buildBoundedTranscript(messages, timezoneName, MAX_TRANSCRIPT_CHARS, includeLinks);
   if (!transcript) {
@@ -446,7 +608,6 @@ export async function summarizeMessages(
     : locale.systemInstruction;
   const userPrompt = locale.userPromptTemplate(timeframeDesc, includedTextMessageCount, transcript);
 
-  const provider = getProvider();
   try {
     const summary = provider === 'openai'
       ? await generateWithOpenAI(systemInstruction, userPrompt)
