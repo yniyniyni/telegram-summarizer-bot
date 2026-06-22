@@ -247,6 +247,13 @@ export function isBotMentioned(message: any, botUsername: string): boolean {
  */
 async function databaseCleanupLoop(): Promise<void> {
   try {
+    // Delete media files for old messages before DB cleanup
+    const oldPaths = await db.getOldMediaPaths(30);
+    if (oldPaths.length > 0) {
+      const deleted = media.deleteMediaFiles(oldPaths);
+      log("INFO", `Database cleanup: removed ${deleted} media files older than 30 days.`);
+    }
+
     const cleaned = await db.cleanupOldMessages(30);
     log("INFO", `Database cleanup: removed ${cleaned} messages older than 30 days.`);
   } catch (err) {
@@ -570,6 +577,16 @@ async function startBot(): Promise<void> {
 
   // Check fail-closed mode on startup
   checkFailClosedMode();
+
+  // Multimodal + OpenAI compatibility warning
+  if (media.multimodalEnabled() && summarizer.getProvider() === 'openai') {
+    log("INFO", "Multimodal is enabled but LLM_PROVIDER=openai does not support native multimodal input. Media will be reduced to text placeholders.");
+  }
+
+  // Multimodal without Gemini API key
+  if (media.multimodalEnabled() && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+    log("WARN", "Multimodal is enabled but no Gemini API key is configured. Media will be logged but cannot be sent to the LLM. Set GEMINI_API_KEY or GOOGLE_API_KEY.");
+  }
 
   log("INFO", "Initializing SQLite database...");
   const rawDbPath = process.env.DB_PATH || 'data/bot_messages.db';
