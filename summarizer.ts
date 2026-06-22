@@ -3,7 +3,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { SavedMessage } from './db.js';
 import { getLocale, Locales } from './locales.js';
-import { shouldIncludeMedia, includeByDefault as mediaIncludeByDefault } from './media.js';
+import { shouldIncludeMedia, includeByDefault as mediaIncludeByDefault, resolveMimeType } from './media.js';
 import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
@@ -292,9 +292,16 @@ export function buildMultimodalContents(
 
     // Append inlineData part if media is included and within size budget
     if (hasMedia && includeThisMedia && msg.media_path) {
-      const mimeType = msg.media_mime_type || '';
-      // Skip unsupported MIME types before touching the disk — sending one to
-      // the LLM fails the whole request with a 400 (e.g. application/octet-stream).
+      // Prefer the stored MIME, but if it is missing or unsupported (e.g. legacy
+      // rows where Telegram voice .oga was persisted as application/octet-stream),
+      // re-derive it from the file extension and media type. This self-heals old
+      // data without a DB migration.
+      let mimeType = msg.media_mime_type || '';
+      if (!SUPPORTED_MULTIMODAL_MIME_TYPES.has(mimeType) && msg.media_type) {
+        mimeType = resolveMimeType(path.extname(msg.media_path), msg.media_type);
+      }
+      // Skip genuinely unsupported MIME types before touching the disk — sending
+      // one to the LLM fails the whole request with a 400.
       if (!SUPPORTED_MULTIMODAL_MIME_TYPES.has(mimeType)) {
         // Text line (with media placeholder) was already pushed above; just
         // record the skip and move on without attaching the binary.
