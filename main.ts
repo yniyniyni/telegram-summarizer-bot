@@ -308,7 +308,11 @@ export async function logMessage(ctx: Context): Promise<void> {
     last_name,
     text,
     timestamp,
-    thread_id
+    thread_id,
+    media_type: null,
+    media_file_id: null,
+    media_path: null,
+    media_mime_type: null,
   });
 }
 

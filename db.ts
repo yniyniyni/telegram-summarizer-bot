@@ -13,6 +13,10 @@ export interface SavedMessage {
   text: string;
   timestamp: number;
   thread_id: number | null;
+  media_type: string | null;
+  media_file_id: string | null;
+  media_path: string | null;
+  media_mime_type: string | null;
 }
 
 let dbPath = 'data/bot_messages.db';
@@ -81,8 +85,36 @@ export async function initDb(): Promise<void> {
     `);
 
     await instance.exec(`
-      CREATE INDEX IF NOT EXISTS idx_messages_chat_time 
+      CREATE INDEX IF NOT EXISTS idx_messages_chat_time
       ON messages (chat_id, timestamp)
+    `);
+
+    // Media columns migration (added 2026-06-22)
+    const existingCols = await instance.all<{ name: string }[]>(
+      "PRAGMA table_info(messages)"
+    );
+    const colNames = new Set(existingCols.map(c => c.name));
+
+    const mediaMigration = [
+      { name: 'media_type',       sql: "ALTER TABLE messages ADD COLUMN media_type TEXT" },
+      { name: 'media_file_id',    sql: "ALTER TABLE messages ADD COLUMN media_file_id TEXT" },
+      { name: 'media_path',       sql: "ALTER TABLE messages ADD COLUMN media_path TEXT" },
+      { name: 'media_mime_type',  sql: "ALTER TABLE messages ADD COLUMN media_mime_type TEXT" },
+    ];
+
+    for (const col of mediaMigration) {
+      if (!colNames.has(col.name)) {
+        try {
+          await instance.exec(col.sql);
+        } catch (_err) {
+          // Column may already exist from a concurrent/previous partial migration
+        }
+      }
+    }
+
+    await instance.exec(`
+      CREATE INDEX IF NOT EXISTS idx_messages_media
+      ON messages (chat_id, media_type, timestamp)
     `);
 
     dbInstance = instance;
@@ -109,7 +141,11 @@ export async function saveMessage({
   last_name = null,
   text,
   timestamp,
-  thread_id = null
+  thread_id = null,
+  media_type = null,
+  media_file_id = null,
+  media_path = null,
+  media_mime_type = null,
 }: SavedMessage): Promise<void> {
   if (!dbInstance) {
     throw new Error("Database not initialized. Call initDb() first.");
@@ -117,9 +153,11 @@ export async function saveMessage({
 
   await dbInstance.run(
     `INSERT OR REPLACE INTO messages (
-      chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id]
+      chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+      media_type, media_file_id, media_path, media_mime_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+     media_type ?? null, media_file_id ?? null, media_path ?? null, media_mime_type ?? null]
   );
 }
 
@@ -138,7 +176,8 @@ export async function getMessages(
   }
 
   let subquery = `
-    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
+    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+           media_type, media_file_id, media_path, media_mime_type
     FROM messages
     WHERE chat_id = ? AND timestamp >= ?
   `;
@@ -163,7 +202,8 @@ export async function getMessages(
   params.push(limit);
 
   const query = `
-    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id
+    SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
+           media_type, media_file_id, media_path, media_mime_type
     FROM (${subquery})
     ORDER BY timestamp ASC, message_id ASC
   `;
