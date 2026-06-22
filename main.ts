@@ -6,6 +6,7 @@ import * as db from './db.js';
 import * as summarizer from './summarizer.js';
 import { getLocale } from './locales.js';
 import { escapeHTML, sanitizeHTML, isChatAuthorized, isRateLimited, splitHTMLText, log, safeErrorForLog } from './utils.js';
+import * as media from './media.js';
 
 export interface TimeframeResult {
   sinceTs: number;
@@ -255,6 +256,8 @@ async function databaseCleanupLoop(): Promise<void> {
 
 /**
  * Saves incoming messages or updates edited messages in the database.
+ * When multimodal is enabled, detects photo/voice/video_note, downloads them
+ * via Telegram API, and persists media metadata alongside the message.
  */
 export async function logMessage(ctx: Context): Promise<void> {
   const message = ctx.message || ctx.editedMessage;
@@ -266,11 +269,34 @@ export async function logMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  const text = ('text' in message ? message.text : '') || ('caption' in message ? message.caption : '');
-  if (!text) return;
+  const text: string = ('text' in message ? (message.text || '') : '') || ('caption' in message ? (message.caption || '') : '');
 
-  // Don't log bot command updates
-  if (text.startsWith('/')) return;
+  // Detect media (only when master switch is on)
+  let mediaType: string | null = null;
+  let mediaFileId: string | null = null;
+  let mediaPath: string | null = null;
+  let mediaMimeType: string | null = null;
+
+  if (media.multimodalEnabled()) {
+    if (media.imagesEnabled() && 'photo' in message && message.photo && message.photo.length > 0) {
+      // Pick largest photo (last in array)
+      const photo = message.photo[message.photo.length - 1];
+      mediaType = 'image';
+      mediaFileId = photo.file_id;
+    } else if (media.voiceEnabled() && 'voice' in message && message.voice) {
+      mediaType = 'voice';
+      mediaFileId = message.voice.file_id;
+    } else if (media.videoNoteEnabled() && 'video_note' in message && message.video_note) {
+      mediaType = 'video_note';
+      mediaFileId = message.video_note.file_id;
+    }
+  }
+
+  // Bail only if neither text nor media
+  if (!text && !mediaType) return;
+
+  // Skip commands (even with media — but media-only messages without /text are not commands)
+  if (text && text.startsWith('/')) return;
 
   const botUsername = ctx.botInfo?.username;
   if (botUsername && isBotMentioned(message, botUsername)) {
@@ -299,6 +325,16 @@ export async function logMessage(ctx: Context): Promise<void> {
 
   const thread_id = ('message_thread_id' in message ? message.message_thread_id : null) || null;
 
+  // Download media if detected
+  if (mediaType && mediaFileId && ctx.telegram) {
+    const botToken = ctx.telegram.token;
+    const result = await media.downloadMedia(botToken, mediaFileId, chat_id, message_id, mediaType);
+    if (result) {
+      mediaPath = result.path;
+      mediaMimeType = result.mimeType;
+    }
+  }
+
   await db.saveMessage({
     chat_id,
     message_id,
@@ -309,11 +345,29 @@ export async function logMessage(ctx: Context): Promise<void> {
     text,
     timestamp,
     thread_id,
-    media_type: null,
-    media_file_id: null,
-    media_path: null,
-    media_mime_type: null,
+    media_type: mediaType,
+    media_file_id: mediaFileId,
+    media_path: mediaPath,
+    media_mime_type: mediaMimeType,
   });
+
+  // Enforce storage limit after every successful media save
+  if (mediaPath) {
+    const maxMb = media.getStorageMaxMb();
+    try {
+      const oldest = await db.getOldestMediaRecords(100);
+      const deleted = media.enforceStorageLimit(oldest, maxMb);
+      if (deleted.length > 0) {
+        for (const path of deleted) {
+          try {
+            await db.clearMediaPath(path);
+          } catch (_) { /* best effort */ }
+        }
+      }
+    } catch (err) {
+      log("WARN", `Storage limit enforcement failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 const activeLocks = new Set<number>();
