@@ -577,9 +577,219 @@ async function runSummarization(ctx: Context): Promise<void> {
           );
         }
       }
+
+      // Save to deep-dive cache
+      if (deepDiveEnabled()) {
+        const cacheKey = `${chatId}:${threadId ?? 0}`;
+        summaryCache.set(cacheKey, {
+          html: summaryText,
+          sinceTs,
+          untilTs,
+          messageCount: filteredMessages.length,
+          createdAt: Date.now(),
+        });
+      }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log("ERROR", "Error during summarization execution:", safeErrorForLog(err));
+      try {
+        if (statusMessage) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            locale.failedToGenerateWithError(escapeHTML(errMsg)),
+            { parse_mode: 'HTML' }
+          );
+        } else {
+          await ctx.reply(locale.failedToGenerateWithError(escapeHTML(errMsg)), { ...replyOptions, parse_mode: 'HTML' });
+        }
+      } catch (editErr) {
+        log("ERROR", "Could not send/update error message to user:", safeErrorForLog(editErr));
+      }
+    }
+  } finally {
+    activeLocks.delete(chatId);
+  }
+}
+
+async function runDeepDive(
+  ctx: Context,
+  timeframe: TimeframeResult,
+  question: string
+): Promise<void> {
+  const message = ctx.message;
+  if (!message || !ctx.chat) return;
+
+  const chatId = ctx.chat.id;
+  const locale = getLocale();
+
+  const replyOptions: { message_thread_id?: number } = {};
+  const threadId = ('message_thread_id' in message ? message.message_thread_id : undefined) || null;
+  if (threadId) {
+    replyOptions.message_thread_id = threadId;
+  }
+
+  const cacheKey = `${chatId}:${threadId ?? 0}`;
+
+  if (activeLocks.has(chatId)) {
+    await ctx.reply(locale.summarizationInProgress, replyOptions);
+    return;
+  }
+  activeLocks.add(chatId);
+
+  try {
+    const rateLimitResult = isRateLimited(chatId);
+    if (rateLimitResult.limited) {
+      await ctx.reply(locale.rateLimited(rateLimitResult.retryAfter || 0), replyOptions);
+      return;
+    }
+
+    const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
+    const botUsername = ctx.botInfo?.username;
+    const includeLinks = summarizer.linksEnabled() && summarizer.isLinkableChat(chatId);
+
+    let statusMessage: any = null;
+
+    try {
+      // ── Gather context ──
+      let contextMessages: db.SavedMessage[];
+      let cachedSummary: string | undefined;
+      let contextDesc: string;
+
+      if (timeframe.sinceTs !== undefined) {
+        // Scenario 2: timeframe specified — fetch messages for the period
+        contextMessages = await db.getMessages(chatId, timeframe.sinceTs, threadId, 5000, timeframe.untilTs);
+        contextDesc = timeframe.desc;
+        cachedSummary = undefined;
+      } else {
+        // Scenario 1: no timeframe — use cached summary + raw messages
+        const cached = summaryCache.get(cacheKey);
+        if (cached) {
+          contextMessages = await db.getMessages(chatId, cached.sinceTs, threadId, 5000, cached.untilTs);
+          cachedSummary = cached.html;
+          contextDesc = `${locale.timeframeDefault} (cached)`;
+        } else {
+          // No cache — fall back to last 24h
+          const since = Math.floor(Date.now() / 1000) - 24 * 3600;
+          contextMessages = await db.getMessages(chatId, since, threadId, 5000);
+          contextDesc = locale.timeframeDefault;
+          cachedSummary = undefined;
+        }
+      }
+
+      // Filter commands and bot mentions
+      const filteredMessages = contextMessages.filter(msg => {
+        const msgText = msg.text || '';
+        if (msgText.startsWith('/')) return false;
+        if (botUsername && isBotMentioned(msg, botUsername)) return false;
+        return true;
+      });
+
+      const hasAnyContent = filteredMessages.some(m =>
+        (m.text && m.text.trim()) || (m.media_type && m.media_path)
+      );
+
+      if (!hasAnyContent) {
+        await ctx.reply(locale.noTextMessagesForPeriod(contextDesc), replyOptions);
+        return;
+      }
+
+      statusMessage = await ctx.reply(
+        locale.deepDiveGeneratingContext,
+        { ...replyOptions, parse_mode: 'HTML' }
+      );
+
+      const { transcript } = summarizer.buildBoundedTranscript(
+        filteredMessages, tz, summarizer.MAX_TRANSCRIPT_CHARS, includeLinks
+      );
+
+      if (!transcript) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          locale.noTextMessages,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      const systemInstruction = includeLinks
+        ? `${locale.deepDiveSystemInstruction}\n${locale.citationInstruction}`
+        : locale.deepDiveSystemInstruction;
+
+      const userPrompt = locale.deepDivePrompt(question, contextDesc, transcript, cachedSummary);
+
+      log("INFO", `Deep-dive request in chat_id=${chatId} (thread_id=${threadId}): "${question.slice(0, 100)}", context: ${contextDesc}`);
+
+      const provider = summarizer.getProvider();
+      let summary: string;
+      try {
+        summary = provider === 'openai'
+          ? await summarizer.generateWithOpenAI(systemInstruction, userPrompt)
+          : await summarizer.generateWithGemini(systemInstruction, userPrompt);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log("ERROR", `Error calling ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API (deep-dive): ${errMsg}`);
+        throw err;
+      }
+
+      if (!summary) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          locale.failedToGenerate,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      let html = sanitizeHTML(summary);
+      if (includeLinks) {
+        const byId = new Map(filteredMessages.map((m) => [m.message_id, m]));
+        html = summarizer.linkifyCitations(html, byId);
+      }
+
+      const maxLength = 4000;
+      if (html.length > maxLength) {
+        const chunks = splitHTMLText(html, maxLength);
+        try {
+          await ctx.telegram.deleteMessage(ctx.chat.id, statusMessage.message_id);
+        } catch (err) {
+          log("WARN", "Could not delete status message:", safeErrorForLog(err));
+        }
+        for (const chunk of chunks) {
+          try {
+            await ctx.reply(chunk, { ...replyOptions, parse_mode: 'HTML' });
+          } catch (err) {
+            log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+            await ctx.reply(chunk, replyOptions);
+          }
+        }
+      } else {
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            html,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            html
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log("ERROR", "Error during deep-dive execution:", safeErrorForLog(err));
       try {
         if (statusMessage) {
           await ctx.telegram.editMessageText(
@@ -628,6 +838,18 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
           locale.welcomeMessage(botUsername || 'bot_username'),
           { parse_mode: 'HTML' }
         );
+        return;
+      }
+    }
+
+    // ── Deep-dive routing ──
+    if (deepDiveEnabled()) {
+      const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
+      const timeframe = parseTimeframe(text, tz);
+      const question = parseDeepDiveRequest(text, timeframe);
+      if (question) {
+        log("INFO", `Deep-dive request detected: timeframe=${timeframe.desc || 'none'}, question="${question.slice(0, 100)}"`);
+        await runDeepDive(ctx, timeframe, question);
         return;
       }
     }
