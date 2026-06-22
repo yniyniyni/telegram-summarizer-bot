@@ -90,6 +90,54 @@ test('getStorageMaxMb returns parsed value', () => {
   delete process.env.MEDIA_STORAGE_MAX_MB;
 });
 
+// --- filesApiMode ---
+
+test('filesApiMode defaults to off', () => {
+  delete process.env.MULTIMODAL_FILES_API;
+  assert.equal(media.filesApiMode(), 'off');
+});
+
+test('filesApiMode parses ondemand/cache/on/true', () => {
+  process.env.MULTIMODAL_FILES_API = 'ondemand';
+  assert.equal(media.filesApiMode(), 'ondemand');
+  process.env.MULTIMODAL_FILES_API = 'CACHE';
+  assert.equal(media.filesApiMode(), 'cache');
+  process.env.MULTIMODAL_FILES_API = 'on';
+  assert.equal(media.filesApiMode(), 'ondemand');
+  process.env.MULTIMODAL_FILES_API = 'true';
+  assert.equal(media.filesApiMode(), 'ondemand');
+  process.env.MULTIMODAL_FILES_API = 'garbage';
+  assert.equal(media.filesApiMode(), 'off');
+  delete process.env.MULTIMODAL_FILES_API;
+});
+
+// --- download limits (raised when Files API enabled) ---
+
+test('withinDownloadLimit uses per-type caps when Files API off', () => {
+  delete process.env.MULTIMODAL_FILES_API;
+  delete process.env.MEDIA_MAX_DOWNLOAD_MB;
+  assert.equal(media.withinDownloadLimit(2_000_000, 'image'), false); // >1MB image cap
+  assert.equal(media.withinDownloadLimit(500_000, 'image'), true);
+});
+
+test('withinDownloadLimit raises cap to 20MB when Files API on', () => {
+  process.env.MULTIMODAL_FILES_API = 'ondemand';
+  delete process.env.MEDIA_MAX_DOWNLOAD_MB;
+  assert.equal(media.withinDownloadLimit(2_000_000, 'image'), true);  // now allowed
+  assert.equal(media.withinDownloadLimit(19 * 1_048_576, 'image'), true);
+  assert.equal(media.withinDownloadLimit(21 * 1_048_576, 'image'), false); // over 20MB
+  delete process.env.MULTIMODAL_FILES_API;
+});
+
+test('withinDownloadLimit honours MEDIA_MAX_DOWNLOAD_MB override', () => {
+  process.env.MULTIMODAL_FILES_API = 'cache';
+  process.env.MEDIA_MAX_DOWNLOAD_MB = '5';
+  assert.equal(media.withinDownloadLimit(4 * 1_048_576, 'voice'), true);
+  assert.equal(media.withinDownloadLimit(6 * 1_048_576, 'voice'), false);
+  delete process.env.MULTIMODAL_FILES_API;
+  delete process.env.MEDIA_MAX_DOWNLOAD_MB;
+});
+
 // --- checkMediaSize ---
 
 test('checkMediaSize: image under 1MB passes', () => {
@@ -717,6 +765,40 @@ test('buildMultimodalContents skips media with unsupported MIME type', () => {
   }
 });
 
+test('buildMultimodalContents: fileUriMap emits fileData part instead of inline', () => {
+  // When a Files API URI is resolved for a media path, the media is sent by
+  // reference (fileData) — no disk read, no inline base64, no size limit.
+  const locale = getLocale();
+  const msgs: db.SavedMessage[] = [
+    {
+      chat_id: -100123, message_id: 42, user_id: 100, username: null,
+      first_name: 'BigVoice', last_name: null, text: 'huge voice',
+      timestamp: 7000000, thread_id: null,
+      media_type: 'voice', media_file_id: 'vf42',
+      media_path: 'data/media/-100123/never_read_from_disk.oga',
+      media_mime_type: 'audio/ogg',
+    },
+  ];
+
+  const fileUriMap = new Map<string, { fileUri: string; mimeType: string }>([
+    [msgs[0].media_path as string, { fileUri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123', mimeType: 'audio/ogg' }],
+  ]);
+
+  const result = summarizer.buildMultimodalContents(
+    msgs, 'test period', 'UTC',
+    { images: true, voice: true, videoNote: true },
+    locale, false, fileUriMap
+  );
+
+  assert.equal(result.mediaCount, 1);
+  assert.equal(result.skippedMediaCount, 0);
+  const partsStr = JSON.stringify(result.contents[0].parts);
+  assert.ok(partsStr.includes('fileData'), 'should attach fileData part');
+  assert.ok(partsStr.includes('files/abc123'), 'should reference the uploaded file URI');
+  assert.ok(!partsStr.includes('inlineData'), 'should not inline when a URI is provided');
+  assert.ok(partsStr.includes(locale.voiceAttached));
+});
+
 // ===================================================================
 // Async DB-dependent tests
 // ===================================================================
@@ -753,6 +835,43 @@ async function runTests() {
       assert.equal(msgs[0].media_path, 'data/media/test.jpg');
       assert.equal(msgs[0].media_mime_type, 'image/jpeg');
       assert.equal(msgs[0].text, 'check this photo');
+    } finally {
+      await teardownTestDb(tmpDir);
+    }
+  });
+
+  await testAsync('setMediaFileUri caches Files API URI and getMessages returns it', async () => {
+    const tmpDir = await setupTestDb();
+    try {
+      await db.saveMessage({
+        chat_id: -100123,
+        message_id: 7,
+        user_id: 100,
+        username: null,
+        first_name: 'Test',
+        last_name: null,
+        text: 'voice',
+        timestamp: Math.floor(Date.now() / 1000),
+        thread_id: null,
+        media_type: 'voice',
+        media_file_id: 'vf7',
+        media_path: 'data/media/-100123/v7.oga',
+        media_mime_type: 'audio/ogg',
+      });
+
+      // Initially no cached URI.
+      let msgs = await db.getMessages(-100123, 0, null);
+      assert.equal(msgs[0].media_file_uri ?? null, null);
+      assert.equal(msgs[0].media_file_uri_expires ?? null, null);
+
+      const expires = Math.floor(Date.now() / 1000) + 47 * 3600;
+      await db.setMediaFileUri(-100123, 7, 'files/xyz789', expires);
+
+      msgs = await db.getMessages(-100123, 0, null);
+      assert.equal(msgs[0].media_file_uri, 'files/xyz789');
+      assert.equal(msgs[0].media_file_uri_expires, expires);
+      // Other media columns untouched.
+      assert.equal(msgs[0].media_path, 'data/media/-100123/v7.oga');
     } finally {
       await teardownTestDb(tmpDir);
     }

@@ -36,6 +36,28 @@ export function getStorageMaxMb(): number {
   return isNaN(parsed) || parsed <= 0 ? 500 : parsed;
 }
 
+// ── Gemini Files API config ──
+
+export type FilesApiMode = 'off' | 'ondemand' | 'cache';
+
+/**
+ * Files API mode (opt-in, defaults to 'off'):
+ *  - 'off'      → inline base64 only (original behavior, conservative size caps)
+ *  - 'ondemand' → upload local media to the Files API at summarization time
+ *  - 'cache'    → like ondemand, but cache the uploaded URI in the DB and reuse
+ *                 it across summarizations within Google's 48h retention window
+ */
+export function filesApiMode(): FilesApiMode {
+  const val = (process.env.MULTIMODAL_FILES_API || '').trim().toLowerCase();
+  if (val === 'ondemand' || val === 'on' || val === 'true') return 'ondemand';
+  if (val === 'cache') return 'cache';
+  return 'off';
+}
+
+// Telegram Bot API will not serve files larger than 20 MB via getFile (without a
+// self-hosted local Bot API server), so that is the practical download ceiling.
+export const TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1_048_576;
+
 // ── Size checking ──
 
 export function checkMediaSize(fileSize: number, mediaType: string): boolean {
@@ -45,6 +67,32 @@ export function checkMediaSize(fileSize: number, mediaType: string): boolean {
     case 'video_note': return fileSize <= MAX_VIDEO_NOTE_BYTES;
     default:           return false;
   }
+}
+
+/**
+ * Maximum bytes we are willing to download for a media type. With Files API
+ * disabled, the conservative per-type inline caps apply. With Files API enabled,
+ * large media can be sent by URI, so the cap is raised to MEDIA_MAX_DOWNLOAD_MB
+ * (default 20 MB, the Telegram ceiling).
+ */
+export function getMaxDownloadBytes(mediaType: string): number {
+  if (filesApiMode() !== 'off') {
+    const val = process.env.MEDIA_MAX_DOWNLOAD_MB;
+    const parsed = val ? parseInt(val, 10) : NaN;
+    const mb = !isNaN(parsed) && parsed > 0 ? parsed : 20;
+    return mb * 1_048_576;
+  }
+  switch (mediaType) {
+    case 'image':      return MAX_IMAGE_BYTES;
+    case 'voice':      return MAX_VOICE_BYTES;
+    case 'video_note': return MAX_VIDEO_NOTE_BYTES;
+    default:           return 0;
+  }
+}
+
+export function withinDownloadLimit(size: number, mediaType: string): boolean {
+  const max = getMaxDownloadBytes(mediaType);
+  return max > 0 && size <= max;
 }
 
 // ── Keyword matching ──
@@ -158,7 +206,7 @@ export async function downloadMedia(
     const fileSize = fileData.result.file_size || 0;
 
     // 2. Size check (pre-download, based on Telegram-reported size)
-    if (fileSize > 0 && !checkMediaSize(fileSize, mediaType)) {
+    if (fileSize > 0 && !withinDownloadLimit(fileSize, mediaType)) {
       log("WARN", `Media file too large: ${fileSize} bytes for type ${mediaType} (file_id=${fileId})`);
       return null;
     }
@@ -189,7 +237,7 @@ export async function downloadMedia(
     const contentLength = downloadRes.headers.get('content-length');
     if (contentLength) {
       const size = parseInt(contentLength, 10);
-      if (!isNaN(size) && !checkMediaSize(size, mediaType)) {
+      if (!isNaN(size) && !withinDownloadLimit(size, mediaType)) {
         log("WARN", `Media file too large (Content-Length=${size} bytes) for type ${mediaType}, skipping download`);
         return null;
       }
@@ -198,7 +246,7 @@ export async function downloadMedia(
     const buffer = Buffer.from(await downloadRes.arrayBuffer());
 
     // 5. Double-check actual size (Telegram may not report file_size)
-    if (buffer.length > 0 && !checkMediaSize(buffer.length, mediaType)) {
+    if (buffer.length > 0 && !withinDownloadLimit(buffer.length, mediaType)) {
       log("WARN", `Downloaded media file too large: ${buffer.length} bytes for type ${mediaType}`);
       return null;
     }

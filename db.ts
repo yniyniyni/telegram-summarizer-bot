@@ -17,6 +17,10 @@ export interface SavedMessage {
   media_file_id: string | null;
   media_path: string | null;
   media_mime_type: string | null;
+  // Gemini Files API: cached uploaded-file URI and its unix-seconds expiry.
+  // Optional so existing SavedMessage literals (and pre-migration rows) stay valid.
+  media_file_uri?: string | null;
+  media_file_uri_expires?: number | null;
 }
 
 let dbPath = 'data/bot_messages.db';
@@ -100,6 +104,8 @@ export async function initDb(): Promise<void> {
       { name: 'media_file_id',    sql: "ALTER TABLE messages ADD COLUMN media_file_id TEXT" },
       { name: 'media_path',       sql: "ALTER TABLE messages ADD COLUMN media_path TEXT" },
       { name: 'media_mime_type',  sql: "ALTER TABLE messages ADD COLUMN media_mime_type TEXT" },
+      { name: 'media_file_uri',          sql: "ALTER TABLE messages ADD COLUMN media_file_uri TEXT" },
+      { name: 'media_file_uri_expires',  sql: "ALTER TABLE messages ADD COLUMN media_file_uri_expires INTEGER" },
     ];
 
     for (const col of mediaMigration) {
@@ -146,6 +152,8 @@ export async function saveMessage({
   media_file_id = null,
   media_path = null,
   media_mime_type = null,
+  media_file_uri = null,
+  media_file_uri_expires = null,
 }: SavedMessage): Promise<void> {
   if (!dbInstance) {
     throw new Error("Database not initialized. Call initDb() first.");
@@ -154,10 +162,11 @@ export async function saveMessage({
   await dbInstance.run(
     `INSERT OR REPLACE INTO messages (
       chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
-      media_type, media_file_id, media_path, media_mime_type
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
-     media_type ?? null, media_file_id ?? null, media_path ?? null, media_mime_type ?? null]
+     media_type ?? null, media_file_id ?? null, media_path ?? null, media_mime_type ?? null,
+     media_file_uri ?? null, media_file_uri_expires ?? null]
   );
 }
 
@@ -177,7 +186,7 @@ export async function getMessages(
 
   let subquery = `
     SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
-           media_type, media_file_id, media_path, media_mime_type
+           media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
     FROM messages
     WHERE chat_id = ? AND timestamp >= ?
   `;
@@ -203,7 +212,7 @@ export async function getMessages(
 
   const query = `
     SELECT chat_id, message_id, user_id, username, first_name, last_name, text, timestamp, thread_id,
-           media_type, media_file_id, media_path, media_mime_type
+           media_type, media_file_id, media_path, media_mime_type, media_file_uri, media_file_uri_expires
     FROM (${subquery})
     ORDER BY timestamp ASC, message_id ASC
   `;
@@ -327,6 +336,26 @@ export async function setMediaPath(
   await dbInstance.run(
     "UPDATE messages SET media_path = ?, media_mime_type = ? WHERE chat_id = ? AND message_id = ?",
     [mediaPath, mediaMimeType, chatId, messageId],
+  );
+}
+
+/**
+ * Cache a Gemini Files API URI (and its unix-seconds expiry) for a message,
+ * so subsequent summarizations within the 48h window can reuse the upload
+ * instead of re-uploading the local file.
+ */
+export async function setMediaFileUri(
+  chatId: number,
+  messageId: number,
+  fileUri: string,
+  expiresAt: number,
+): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_file_uri = ?, media_file_uri_expires = ? WHERE chat_id = ? AND message_id = ?",
+    [fileUri, expiresAt, chatId, messageId],
   );
 }
 

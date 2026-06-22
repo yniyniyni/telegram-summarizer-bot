@@ -3,7 +3,8 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { SavedMessage } from './db.js';
 import { getLocale, Locales } from './locales.js';
-import { shouldIncludeMedia, includeByDefault as mediaIncludeByDefault } from './media.js';
+import { shouldIncludeMedia, includeByDefault as mediaIncludeByDefault, filesApiMode } from './media.js';
+import * as db from './db.js';
 import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
@@ -116,6 +117,123 @@ export function getAIClient(): GoogleGenAI {
   return aiInstance;
 }
 
+// ── Gemini Files API upload ──
+
+export const FILES_API_POLL_INTERVAL_MS = 1000;
+export const FILES_API_POLL_TIMEOUT_MS = 60_000;
+// Refresh a cached URI if it has less than this many seconds of life left.
+const FILES_API_EXPIRY_MARGIN_SEC = 5 * 60;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export interface UploadedFile {
+  fileUri: string;
+  mimeType: string;
+  expiresAt: number; // unix seconds
+}
+
+/**
+ * Upload a local media file to the Gemini Files API and wait until it is ACTIVE
+ * (audio/video are processed asynchronously). Returns null on failure so the
+ * caller can fall back to inline / skip. Files are retained by Google for ~48h.
+ */
+export async function uploadMediaToGemini(
+  aiClient: GoogleGenAI,
+  absPath: string,
+  mimeType: string,
+  displayName: string,
+): Promise<UploadedFile | null> {
+  try {
+    let file = await aiClient.files.upload({
+      file: absPath,
+      config: { mimeType, displayName },
+    });
+
+    const deadline = Date.now() + FILES_API_POLL_TIMEOUT_MS;
+    while (file.state === 'PROCESSING' && Date.now() < deadline) {
+      await sleep(FILES_API_POLL_INTERVAL_MS);
+      if (!file.name) break;
+      file = await aiClient.files.get({ name: file.name });
+    }
+
+    if (file.state !== 'ACTIVE' || !file.uri) {
+      log("WARN", `Files API upload not ACTIVE for ${absPath} (state=${file.state ?? 'unknown'})`);
+      return null;
+    }
+
+    const expiresAt = file.expirationTime
+      ? Math.floor(new Date(file.expirationTime).getTime() / 1000)
+      : Math.floor(Date.now() / 1000) + 47 * 3600;
+
+    return { fileUri: file.uri, mimeType: file.mimeType || mimeType, expiresAt };
+  } catch (err) {
+    log("WARN", `Files API upload failed for ${absPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * For each included media message, obtain a Gemini Files API URI. In 'cache'
+ * mode a still-valid URI stored in the DB is reused; otherwise the local file is
+ * uploaded and (in 'cache' mode) the resulting URI is persisted for reuse.
+ * Returns a map keyed by media_path. Used only when filesApiMode() !== 'off'.
+ */
+export async function resolveFileUris(
+  messages: SavedMessage[],
+  includeFlags: { images: boolean; voice: boolean; videoNote: boolean },
+): Promise<Map<string, { fileUri: string; mimeType: string }>> {
+  const map = new Map<string, { fileUri: string; mimeType: string }>();
+  const mode = filesApiMode();
+  if (mode === 'off') return map;
+
+  const aiClient = getAIClient();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  for (const msg of messages) {
+    if (!msg.media_type || !msg.media_path) continue;
+
+    const include =
+      (msg.media_type === 'image' && includeFlags.images) ||
+      (msg.media_type === 'voice' && includeFlags.voice) ||
+      (msg.media_type === 'video_note' && includeFlags.videoNote);
+    if (!include) continue;
+
+    const mimeType = msg.media_mime_type || '';
+    if (!SUPPORTED_MULTIMODAL_MIME_TYPES.has(mimeType)) continue;
+
+    // Reuse a cached, not-yet-expired URI.
+    if (
+      mode === 'cache' &&
+      msg.media_file_uri &&
+      msg.media_file_uri_expires &&
+      msg.media_file_uri_expires - nowSec > FILES_API_EXPIRY_MARGIN_SEC
+    ) {
+      map.set(msg.media_path, { fileUri: msg.media_file_uri, mimeType });
+      continue;
+    }
+
+    const absPath = path.resolve(msg.media_path);
+    if (!fs.existsSync(absPath)) continue;
+
+    const uploaded = await uploadMediaToGemini(
+      aiClient, absPath, mimeType, `msg-${msg.chat_id}-${msg.message_id}`
+    );
+    if (!uploaded) continue;
+
+    map.set(msg.media_path, { fileUri: uploaded.fileUri, mimeType: uploaded.mimeType });
+
+    if (mode === 'cache') {
+      try {
+        await db.setMediaFileUri(msg.chat_id, msg.message_id, uploaded.fileUri, uploaded.expiresAt);
+      } catch (err) {
+        log("DEBUG", `Failed to cache Files API URI for msg ${msg.message_id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  return map;
+}
+
 /**
  * Formats a Unix epoch timestamp into local date-time string YYYY-MM-DD HH:MM:SS
  * @param timestamp 
@@ -170,7 +288,11 @@ export function buildMultimodalContents(
   timezoneName: string,
   includeFlags: { images: boolean; voice: boolean; videoNote: boolean },
   locale: Locales,
-  includeIds: boolean
+  includeIds: boolean,
+  // When present, an entry for a message's media_path means the media is sent as
+  // a Gemini Files API reference (fileData) instead of inline base64. Populated
+  // by resolveFileUris() when filesApiMode() !== 'off'.
+  fileUriMap?: Map<string, { fileUri: string; mimeType: string }>
 ): MultimodalContent {
   const parts: Array<Record<string, unknown>> = [];
   let mediaCount = 0;
@@ -289,6 +411,17 @@ export function buildMultimodalContents(
     }
 
     parts.push({ text: textLine });
+
+    // Prefer a Gemini Files API reference when one was resolved for this media —
+    // this sends large files by URI with no inline base64 size limit.
+    if (hasMedia && includeThisMedia && msg.media_path) {
+      const fileRef = fileUriMap?.get(msg.media_path);
+      if (fileRef) {
+        parts.push({ fileData: { fileUri: fileRef.fileUri, mimeType: fileRef.mimeType } });
+        mediaCount++;
+        continue;
+      }
+    }
 
     // Append inlineData part if media is included and within size budget
     if (hasMedia && includeThisMedia && msg.media_path) {
@@ -665,8 +798,20 @@ export async function summarizeMessages(
     (includeFlags.images || includeFlags.voice || includeFlags.videoNote);
 
   if (useMultimodal) {
+    // When Files API is enabled, upload (or reuse cached) media URIs first so
+    // large files are sent by reference instead of inline base64.
+    let fileUriMap: Map<string, { fileUri: string; mimeType: string }> | undefined;
+    if (filesApiMode() !== 'off') {
+      try {
+        fileUriMap = await resolveFileUris(messages, includeFlags);
+        log("INFO", `Files API (${filesApiMode()}): ${fileUriMap.size} media files referenced by URI.`);
+      } catch (err) {
+        log("WARN", `Files API resolution failed, falling back to inline: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
     const multimodal = buildMultimodalContents(
-      messages, timeframeDesc, timezoneName, includeFlags, locale, includeLinks
+      messages, timeframeDesc, timezoneName, includeFlags, locale, includeLinks, fileUriMap
     );
     log("INFO", `Multimodal request: ${multimodal.mediaCount} media parts included, ${multimodal.skippedMediaCount} skipped.`);
 
