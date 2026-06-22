@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { parseDeepDiveRequest, deepDiveEnabled, CachedSummary, summaryCache } from './main.js';
+import { parseDeepDiveRequest, parseTimeframe, deepDiveEnabled, CachedSummary, summaryCache } from './main.js';
+import * as loc from './locales.js';
 
 let testsPassed = 0;
 let testsFailed = 0;
@@ -173,6 +174,72 @@ test('summaryCache: overwrite on new summary', () => {
   summaryCache.set('-100123:0', second);
   assert.equal(summaryCache.get('-100123:0')!.html, 'second');
   summaryCache.clear();
+});
+
+// --- Deep-dive prompt contains expected elements ---
+
+test('deepDivePrompt includes question, period, and transcript', () => {
+  const locale = loc.getLocale();
+  const prompt = locale.deepDivePrompt(
+    'как прошла миграция?',
+    'последние 3 часа',
+    '[2026-01-01 12:00:00] User1: миграция началась',
+    undefined
+  );
+  assert.ok(prompt.includes('как прошла миграция?'));
+  assert.ok(prompt.includes('последние 3 часа'));
+  assert.ok(prompt.includes('миграция началась'));
+  assert.ok(prompt.includes('<untrusted_transcript>'));
+  assert.ok(prompt.includes('</untrusted_transcript>'));
+});
+
+test('deepDivePrompt includes cached summary when provided', () => {
+  const locale = loc.getLocale();
+  const cachedHtml = '<b>Сводка:</b> обсуждали миграцию, решили перенести';
+  const prompt = locale.deepDivePrompt(
+    'расскажи подробнее',
+    'последние сутки',
+    '[2026-01-01 12:00:00] User1: переносим',
+    cachedHtml
+  );
+  assert.ok(prompt.includes('расскажи подробнее'));
+  assert.ok(prompt.includes('Previous summary'));
+  assert.ok(prompt.includes('Сводка'));
+});
+
+test('deepDivePrompt without cached summary has no summary section', () => {
+  const locale = loc.getLocale();
+  const prompt = locale.deepDivePrompt(
+    'what happened?',
+    'the last week',
+    '[2026-01-01 12:00:00] User1: something',
+    undefined
+  );
+  assert.ok(!prompt.includes('Previous summary'));
+  assert.ok(!prompt.includes('Предыдущая суммаризация'));
+});
+
+// --- Async: parseDeepDiveRequest + timeframe parsing integration ---
+
+test('parseDeepDiveRequest extracts question from "3h + про миграцию"', () => {
+  const tz = 'UTC';
+  const now = 1700000000;
+  const text = '@bot за 3 часа расскажи про миграцию';
+  const timeframe = parseTimeframe(text, tz, now);
+  assert.ok(timeframe.sinceTs !== undefined, 'timeframe should be parsed');
+  const question = parseDeepDiveRequest(text, timeframe);
+  assert.ok(question !== null);
+  assert.ok(question!.includes('расскажи про миграцию'));
+});
+
+test('parseDeepDiveRequest with "сегодня" + question', () => {
+  const tz = 'Europe/Moscow';
+  const text = '@bot сегодня что обсуждали про деплой?';
+  const timeframe = parseTimeframe(text, tz);
+  assert.ok(timeframe.sinceTs !== undefined);
+  const question = parseDeepDiveRequest(text, timeframe);
+  assert.ok(question !== null);
+  assert.ok(question!.includes('обсуждали про деплой'));
 });
 
 function runTests() {
