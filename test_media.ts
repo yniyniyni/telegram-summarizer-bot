@@ -653,6 +653,70 @@ test('buildMultimodalContents: multiple media messages with mixed include flags'
   }
 });
 
+// --- MIME type resolution ---
+
+test('resolveMimeType maps known extensions precisely', () => {
+  assert.equal(media.resolveMimeType('.jpg', 'image'), 'image/jpeg');
+  assert.equal(media.resolveMimeType('.png', 'image'), 'image/png');
+  assert.equal(media.resolveMimeType('.ogg', 'voice'), 'audio/ogg');
+});
+
+test('resolveMimeType maps Telegram voice .oga/.opus to audio/ogg', () => {
+  // Telegram serves voice messages with a .oga extension, which previously
+  // fell through to application/octet-stream and triggered a Gemini 400.
+  assert.equal(media.resolveMimeType('.oga', 'voice'), 'audio/ogg');
+  assert.equal(media.resolveMimeType('.opus', 'voice'), 'audio/ogg');
+});
+
+test('resolveMimeType is case-insensitive', () => {
+  assert.equal(media.resolveMimeType('.JPG', 'image'), 'image/jpeg');
+  assert.equal(media.resolveMimeType('.OGA', 'voice'), 'audio/ogg');
+});
+
+test('resolveMimeType falls back to media-type default for unknown extensions', () => {
+  assert.equal(media.resolveMimeType('.weird', 'image'), 'image/jpeg');
+  assert.equal(media.resolveMimeType('.weird', 'voice'), 'audio/ogg');
+  assert.equal(media.resolveMimeType('.weird', 'video_note'), 'video/mp4');
+  assert.equal(media.resolveMimeType('.weird', 'unknown'), 'application/octet-stream');
+});
+
+test('buildMultimodalContents skips media with unsupported MIME type', () => {
+  const tmpDir = path.join(os.tmpdir(), 'media-badmime-test-' + Date.now());
+  const mediaDir = path.join(tmpDir, 'data', 'media', '-100123');
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const filePath = path.join(mediaDir, '7000_10.bin');
+  fs.writeFileSync(filePath, Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+  try {
+    const locale = getLocale();
+    const msgs: db.SavedMessage[] = [
+      {
+        chat_id: -100123, message_id: 10, user_id: 100, username: null,
+        first_name: 'BadMime', last_name: null, text: 'voice here',
+        timestamp: 7000000, thread_id: null,
+        media_type: 'voice', media_file_id: 'bf1', media_path: filePath,
+        media_mime_type: 'application/octet-stream',
+      },
+    ];
+
+    const result = summarizer.buildMultimodalContents(
+      msgs, 'test period', 'UTC',
+      { images: true, voice: true, videoNote: true },
+      locale, false
+    );
+
+    // Unsupported MIME is skipped, not sent — and never crashes the request.
+    assert.equal(result.mediaCount, 0);
+    assert.equal(result.skippedMediaCount, 1);
+    const partsStr = JSON.stringify(result.contents[0].parts);
+    assert.ok(!partsStr.includes('inlineData'), 'should not attach inlineData for unsupported MIME');
+    // The text line with the voice placeholder must still be present (exactly once).
+    assert.ok(partsStr.includes(locale.voiceAttached));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true });
+  }
+});
+
 // ===================================================================
 // Async DB-dependent tests
 // ===================================================================

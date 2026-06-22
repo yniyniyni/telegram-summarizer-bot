@@ -92,15 +92,37 @@ function mimeToExt(mimeType: string): string {
 }
 
 function extToMime(ext: string): string {
-  switch (ext) {
+  switch (ext.toLowerCase()) {
     case '.jpg':  return 'image/jpeg';
     case '.jpeg': return 'image/jpeg';
+    case '.jfif': return 'image/jpeg';
     case '.png':  return 'image/png';
     case '.webp': return 'image/webp';
     case '.ogg':  return 'audio/ogg';
+    case '.oga':  return 'audio/ogg';  // Telegram serves voice as .oga
+    case '.opus': return 'audio/ogg';
     case '.mp3':  return 'audio/mp3';
     case '.mp4':  return 'video/mp4';
     default:      return 'application/octet-stream';
+  }
+}
+
+/**
+ * Resolve a MIME type from a file extension, falling back to a sane default
+ * based on the known media type when the extension is unrecognized. This
+ * prevents persisting (and later sending to the LLM) `application/octet-stream`,
+ * which Gemini rejects with a 400. Telegram file paths sometimes carry
+ * unexpected extensions (e.g. voice as `.oga`), so the type-based fallback
+ * is the safety net.
+ */
+export function resolveMimeType(ext: string, mediaType: string): string {
+  const fromExt = extToMime(ext);
+  if (fromExt !== 'application/octet-stream') return fromExt;
+  switch (mediaType) {
+    case 'image':      return 'image/jpeg';
+    case 'voice':      return 'audio/ogg';
+    case 'video_note': return 'video/mp4';
+    default:           return 'application/octet-stream';
   }
 }
 
@@ -146,7 +168,7 @@ export async function downloadMedia(
       mediaType === 'image' ? 'image/jpeg' :
       mediaType === 'voice' ? 'audio/ogg' : 'video/mp4'
     );
-    const mimeType = extToMime(ext);
+    const mimeType = resolveMimeType(ext, mediaType);
     const ts = Math.floor(Date.now() / 1000);
     const fileName = `${ts}_${messageId}${ext}`;
     const dir = path.join(MEDIA_BASE_DIR, String(chatId));

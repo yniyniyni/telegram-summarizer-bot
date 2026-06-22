@@ -10,6 +10,16 @@ let aiInstance: GoogleGenAI | null = null;
 export const MAX_TRANSCRIPT_CHARS = 1_000_000;
 export const MAX_MULTIMODAL_BASE64_BYTES = 10_000_000; // 10 MB base64-encoded — grace skip before hitting Gemini API limit
 
+// MIME types we are willing to send as inlineData. Anything else (notably
+// application/octet-stream from an unrecognized file extension) is skipped
+// rather than sent, since the LLM rejects unsupported types with a 400 that
+// would otherwise fail the entire request.
+export const SUPPORTED_MULTIMODAL_MIME_TYPES = new Set<string>([
+  'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif',
+  'audio/ogg', 'audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/aac', 'audio/flac',
+  'video/mp4', 'video/mpeg', 'video/webm', 'video/mov', 'video/3gpp',
+]);
+
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
@@ -282,6 +292,16 @@ export function buildMultimodalContents(
 
     // Append inlineData part if media is included and within size budget
     if (hasMedia && includeThisMedia && msg.media_path) {
+      const mimeType = msg.media_mime_type || '';
+      // Skip unsupported MIME types before touching the disk — sending one to
+      // the LLM fails the whole request with a 400 (e.g. application/octet-stream).
+      if (!SUPPORTED_MULTIMODAL_MIME_TYPES.has(mimeType)) {
+        // Text line (with media placeholder) was already pushed above; just
+        // record the skip and move on without attaching the binary.
+        skippedMediaCount++;
+        log("WARN", `Skipping media ${msg.media_path}: unsupported MIME type "${mimeType || '(none)'}" for multimodal input`);
+        continue;
+      }
       try {
         const absPath = path.resolve(msg.media_path);
         if (fs.existsSync(absPath)) {
@@ -292,8 +312,6 @@ export function buildMultimodalContents(
             skippedMediaCount++;
             log("DEBUG", `Skipping media file ${msg.media_path}: would exceed multimodal payload limit (${(totalBase64Bytes + base64.length).toLocaleString()} > ${MAX_MULTIMODAL_BASE64_BYTES.toLocaleString()} bytes)`);
           } else {
-            const mimeType = msg.media_mime_type || 'application/octet-stream';
-
             parts.push({
               inlineData: {
                 mimeType,
