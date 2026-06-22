@@ -438,7 +438,12 @@ async function runSummarization(ctx: Context): Promise<void> {
         log("DEBUG", `Analyzing ${filteredMessages.length} messages...`);
       }
 
-      if (filteredMessages.length === 0) {
+      // Check if there are ANY messages (text or media) to summarize
+      const hasAnyContent = filteredMessages.some(m =>
+        (m.text && m.text.trim()) || (m.media_type && m.media_path)
+      );
+
+      if (!hasAnyContent) {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           statusMessage.message_id,
@@ -449,7 +454,7 @@ async function runSummarization(ctx: Context): Promise<void> {
         return;
       }
 
-      const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz);
+      const rawSummaryText = await summarizer.summarizeMessages(filteredMessages, timeframeDesc, tz, text);
       const summaryText = sanitizeHTML(rawSummaryText);
 
       const maxLength = 4000;
