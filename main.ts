@@ -12,6 +12,8 @@ export interface TimeframeResult {
   sinceTs: number;
   untilTs?: number;
   desc: string;
+  /** True when the user explicitly specified a timeframe; false for the default 24h fallback. */
+  explicit: boolean;
 }
 
 export function validateTimezone(timezone: string): boolean {
@@ -108,7 +110,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const hours = parseInt(match[1], 10);
       const desc = locale.timeframeHour(hours);
-      return { sinceTs: now - (hours * 3600), desc };
+      return { sinceTs: now - (hours * 3600), desc, explicit: true };
     }
   }
 
@@ -116,7 +118,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
   const ruHourSingleMatch = /(?<=^|[^а-яё])(час|часа|часов|ч)(?=$|[^а-яё])/i.test(text);
   const enHourSingleMatch = /\b(hour|hours|h)\b/i.test(text);
   if (ruHourSingleMatch || enHourSingleMatch) {
-    return { sinceTs: now - 3600, desc: locale.timeframeHourSingle };
+    return { sinceTs: now - 3600, desc: locale.timeframeHourSingle, explicit: true };
   }
 
   // 2. Match numeric minutes: "30 минут", "15 мин"
@@ -127,7 +129,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const mins = parseInt(match[1], 10);
       const desc = locale.timeframeMin(mins);
-      return { sinceTs: now - (mins * 60), desc };
+      return { sinceTs: now - (mins * 60), desc, explicit: true };
     }
   }
 
@@ -135,7 +137,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
   const ruMinSingleMatch = /(?<=^|[^а-яё])(минут|минута|минуты|минуту|мин)(?=$|[^а-яё])/i.test(text);
   const enMinSingleMatch = /\b(min|minute|minutes)\b/i.test(text);
   if (ruMinSingleMatch || enMinSingleMatch) {
-    return { sinceTs: now - 600, desc: locale.timeframeMinSingle };
+    return { sinceTs: now - 600, desc: locale.timeframeMinSingle, explicit: true };
   }
 
   // 3. Today / "сегодня" (from 00:00 of the current day in target timezone)
@@ -146,7 +148,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (midnightTs >= now) {
       midnightTs = now - defaultSeconds;
     }
-    return { sinceTs: midnightTs, desc: locale.timeframeToday };
+    return { sinceTs: midnightTs, desc: locale.timeframeToday, explicit: true };
   }
 
   // 4. Yesterday / "вчера" (from 00:00 of yesterday in target timezone)
@@ -158,7 +160,7 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     const tzString = new Date(yesterdayMiddayMs).toLocaleString('sv-SE', { timeZone: timezoneName });
     const [yesterdayDatePart] = tzString.split(' ');
     const yesterdayTs = getMidnightTimestampForDate(yesterdayDatePart, timezoneName);
-    return { sinceTs: yesterdayTs, untilTs: todayMidnightTs, desc: locale.timeframeYesterday };
+    return { sinceTs: yesterdayTs, untilTs: todayMidnightTs, desc: locale.timeframeYesterday, explicit: true };
   }
 
   // 5. Match numeric days: "3 дня", "5 дней"
@@ -169,27 +171,27 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     if (match) {
       const days = parseInt(match[1], 10);
       const desc = locale.timeframeDay(days);
-      return { sinceTs: now - (days * 24 * 3600), desc };
+      return { sinceTs: now - (days * 24 * 3600), desc, explicit: true };
     }
   }
 
   // Single days checks
   const ruSutkiMatch = /(?<=^|[^а-яё])(сутки|суток)(?=$|[^а-яё])/i.test(text);
   if (ruSutkiMatch) {
-    return { sinceTs: now - (24 * 3600), desc: locale.timeframe24h };
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframe24h, explicit: true };
   }
 
   const ruDaySingleMatch = /(?<=^|[^а-яё])(день)(?=$|[^а-яё])/i.test(text);
   const enDaySingleMatch = /\b(day)\b/i.test(text);
   if (ruDaySingleMatch || enDaySingleMatch) {
-    return { sinceTs: now - (24 * 3600), desc: locale.timeframeDaySingle };
+    return { sinceTs: now - (24 * 3600), desc: locale.timeframeDaySingle, explicit: true };
   }
 
   // 6. Week / "неделя"
   const ruWeekMatch = /(?<=^|[^а-яё])(неделя|неделю|недели|недель|неделе)(?=$|[^а-яё])/i.test(text);
   const enWeekMatch = /\b(week|weeks)\b/i.test(text);
   if (ruWeekMatch || enWeekMatch) {
-    return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek };
+    return { sinceTs: now - (7 * 24 * 3600), desc: locale.timeframeWeek, explicit: true };
   }
 
   // 7. Month / "месяц"
@@ -199,17 +201,17 @@ export function parseTimeframe(text: string, timezoneName = 'Europe/Moscow', now
     const match = ruMonthsMatch || enMonthsMatch;
     if (match) {
       const months = parseInt(match[1], 10);
-      return { sinceTs: now - (months * 30 * 24 * 3600), desc: locale.timeframeMonth(months) };
+      return { sinceTs: now - (months * 30 * 24 * 3600), desc: locale.timeframeMonth(months), explicit: true };
     }
   }
   // Single month check
   const ruMonthSingleMatch = /(?<=^|[^а-яё])(месяц|месяца|месяцев|мес)(?=$|[^а-яё])/i.test(text);
   const enMonthSingleMatch = /\b(month|months)\b/i.test(text);
   if (ruMonthSingleMatch || enMonthSingleMatch) {
-    return { sinceTs: now - (30 * 24 * 3600), desc: locale.timeframeMonthSingle };
+    return { sinceTs: now - (30 * 24 * 3600), desc: locale.timeframeMonthSingle, explicit: true };
   }
 
-  return { sinceTs: now - defaultSeconds, desc: defaultDesc };
+  return { sinceTs: now - defaultSeconds, desc: defaultDesc, explicit: false };
 }
 
 /**
@@ -387,10 +389,106 @@ export async function logMessage(ctx: Context): Promise<void> {
 
 const activeLocks = new Set<number>();
 
+// ── Summary cache for deep-dive mode ──
+const CACHE_MAX_AGE_MS = 72 * 3600 * 1000; // 3 days — drop cached summaries older than this
+const DB_CLEANUP_WINDOW_SEC = 30 * 86400;  // aligned with db.cleanupOldMessages(30)
+
+export interface CachedSummary {
+  /** Telegram-safe HTML (sanitized) — for stats / future display, NOT for LLM prompts. */
+  html: string;
+  /** Raw LLM output (pre-sanitizeHTML) — what gets injected into deep-dive prompts. */
+  rawText: string;
+  sinceTs: number;
+  untilTs?: number;
+  messageCount: number;
+  createdAt: number;
+}
+export const summaryCache = new Map<string, CachedSummary>();
+
+export function deepDiveEnabled(): boolean {
+  return (process.env.DEEP_DIVE_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
+// ── Interrogative markers ──
+// NOTE: '?' is intentionally omitted — bare '?' would match ANY polite `@bot summary?`
+// request and route summarization to deep-dive. Other markers (`что`, `how`, `why`, etc.)
+// already cover genuine questions.
+const INTERROGATIVE_MARKERS = [
+  'как', 'что', 'почему', 'кто', 'когда', 'где', 'зачем', 'какой', 'какая', 'какие',
+  'каков', 'расскажи', 'распиши', 'объясни', 'поясни', 'опиши', 'подробнее', 'углубись',
+  'how', 'what', 'why', 'who', 'when', 'where', 'tell', 'explain', 'describe', 'elaborate',
+  'deep dive', 'detail', 'details', 'break down', 'dig into', 'look into',
+];
+
+// ── Deep-dive request parsing ──
+export function parseDeepDiveRequest(
+  text: string,
+  parsedTimeframe: TimeframeResult,
+  botUsername?: string
+): string | null {
+  let remaining = text;
+
+  // 1. Remove the target bot's @mention only — keep other @mentions
+  //    like @sarah or @devteam as user-intended question context.
+  if (botUsername) {
+    // Boundary-aware: @mybot(?![A-Za-z0-9_]) does NOT match @mybot_admin.
+    remaining = remaining.replace(new RegExp(`@${botUsername}(?![A-Za-z0-9_])\\s*`, 'gi'), '').trim();
+  } else {
+    remaining = remaining.replace(/@\w+\s*/g, '').trim();
+  }
+
+  // 2. Remove timeframe description phrase
+  if (parsedTimeframe.desc) {
+    const descIdx = remaining.toLowerCase().indexOf(parsedTimeframe.desc.toLowerCase());
+    if (descIdx !== -1) {
+      remaining = remaining.slice(0, descIdx) + remaining.slice(descIdx + parsedTimeframe.desc.length);
+    }
+  }
+
+  // 3. Remove common timeframe framing words
+  const timeFramingPhrases = [
+    'за последние', 'за последний', 'за последнюю', 'за последних',
+    'за прошедшие', 'за прошедший', 'за прошедшую',
+    'for the last', 'for last', 'in the last', 'in last',
+    'during the last', 'during last',
+  ];
+  for (const phrase of timeFramingPhrases) {
+    const idx = remaining.toLowerCase().indexOf(phrase.toLowerCase());
+    if (idx !== -1) {
+      remaining = remaining.slice(0, idx) + remaining.slice(idx + phrase.length);
+    }
+  }
+
+  // 4. Remove numeric timeframe values
+  // English units — \b works because JS \w = [a-zA-Z0-9_]
+  remaining = remaining.replace(
+    /\b\d+\s*(hour|hours|h|min|minute|minutes|day|days|d|week|weeks|month|months)\b/gi,
+    ''
+  );
+  // Russian units — NO trailing \b because JS \b is ASCII-only and Cyrillic
+  // chars are \W, so \b after них never matches. Leading \b before \d+ still works.
+  remaining = remaining.replace(
+    /\b\d+\s*(час|часа|часов|ч|минут|минуты|минуту|мин|день|дня|дней|дн|недел|неделю|недели|недель|месяц|месяца|месяцев|мес)/gi,
+    ''
+  );
+
+  remaining = remaining.trim();
+
+  // 5. Candidate too short
+  if (remaining.length < 3) return null;
+
+  // 6. Check interrogative markers
+  const lower = remaining.toLowerCase();
+  const hasMarker = INTERROGATIVE_MARKERS.some(m => lower.includes(m));
+  if (!hasMarker) return null;
+
+  return remaining;
+}
+
 /**
  * Orchestrates fetching logs, invoking Gemini, and displaying the summary.
  */
-async function runSummarization(ctx: Context): Promise<void> {
+async function runSummarization(ctx: Context, preParsedTimeframe?: TimeframeResult): Promise<void> {
   const message = ctx.message;
   if (!message || !ctx.chat) return;
   
@@ -422,7 +520,8 @@ async function runSummarization(ctx: Context): Promise<void> {
     let statusMessage: any = null;
 
     try {
-      const { sinceTs, untilTs, desc: timeframeDesc } = parseTimeframe(text, tz);
+      const timeframe = preParsedTimeframe ?? parseTimeframe(text, tz);
+      const { sinceTs, untilTs, desc: timeframeDesc } = timeframe;
       log("INFO", `Initiating summarization request in chat_id=${chatId} (thread_id=${threadId}). Timeframe parsed: sinceTs=${sinceTs}, untilTs=${untilTs} (${timeframeDesc})`);
 
       statusMessage = await ctx.reply(
@@ -503,9 +602,243 @@ async function runSummarization(ctx: Context): Promise<void> {
           );
         }
       }
+
+      // Save to deep-dive cache — store BOTH the sanitized HTML (for Telegram)
+      // and the raw text (for future LLM prompts, so we don't inject HTML tags
+      // and entities into the LLM context).
+      if (deepDiveEnabled()) {
+        const cacheKey = `${chatId}:${threadId ?? 0}`;
+        summaryCache.set(cacheKey, {
+          html: summaryText,
+          rawText: rawSummaryText,
+          sinceTs,
+          untilTs,
+          messageCount: filteredMessages.length,
+          createdAt: Date.now(),
+        });
+      }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log("ERROR", "Error during summarization execution:", safeErrorForLog(err));
+      try {
+        if (statusMessage) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            locale.failedToGenerateWithError(escapeHTML(errMsg)),
+            { parse_mode: 'HTML' }
+          );
+        } else {
+          await ctx.reply(locale.failedToGenerateWithError(escapeHTML(errMsg)), { ...replyOptions, parse_mode: 'HTML' });
+        }
+      } catch (editErr) {
+        log("ERROR", "Could not send/update error message to user:", safeErrorForLog(editErr));
+      }
+    }
+  } finally {
+    activeLocks.delete(chatId);
+  }
+}
+
+async function runDeepDive(
+  ctx: Context,
+  timeframe: TimeframeResult,
+  question: string
+): Promise<void> {
+  const message = ctx.message;
+  if (!message || !ctx.chat) return;
+
+  const chatId = ctx.chat.id;
+  const locale = getLocale();
+
+  const replyOptions: { message_thread_id?: number } = {};
+  const threadId = ('message_thread_id' in message ? message.message_thread_id : undefined) || null;
+  if (threadId) {
+    replyOptions.message_thread_id = threadId;
+  }
+
+  const cacheKey = `${chatId}:${threadId ?? 0}`;
+
+  if (activeLocks.has(chatId)) {
+    await ctx.reply(locale.summarizationInProgress, replyOptions);
+    return;
+  }
+  activeLocks.add(chatId);
+
+  try {
+    const rateLimitResult = isRateLimited(chatId);
+    if (rateLimitResult.limited) {
+      await ctx.reply(locale.rateLimited(rateLimitResult.retryAfter || 0), replyOptions);
+      return;
+    }
+
+    const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
+    const botUsername = ctx.botInfo?.username;
+    const includeLinks = summarizer.linksEnabled() && summarizer.isLinkableChat(chatId);
+
+    let statusMessage: any = null;
+
+    try {
+      // ── Gather context ──
+      let contextMessages: db.SavedMessage[];
+      let cachedSummary: string | undefined;
+      let contextDesc: string;
+
+      if (timeframe.explicit) {
+        // Scenario: explicit timeframe — fetch messages for the period
+        contextMessages = await db.getMessages(chatId, timeframe.sinceTs, threadId, 5000, timeframe.untilTs);
+        contextDesc = timeframe.desc;
+        cachedSummary = undefined;
+      } else {
+        // Scenario: no explicit timeframe — use cached summary + raw messages
+        const cached = summaryCache.get(cacheKey);
+        // Bail on cache if it is too old (3d) or if its sinceTs predates the
+        // DB cleanup window (30d) — messages may have been deleted so the
+        // cached summary would reference topics missing from the transcript.
+        const cacheAge = cached ? Date.now() - cached.createdAt : Infinity;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cacheValid = cached
+          && cacheAge < CACHE_MAX_AGE_MS
+          && cached.sinceTs > (nowSec - DB_CLEANUP_WINDOW_SEC);
+
+        if (cached && cacheValid) {
+          contextMessages = await db.getMessages(chatId, cached.sinceTs, threadId, 5000, cached.untilTs);
+          // Use rawText (pre-sanitizeHTML) for the LLM prompt — avoids
+          // injecting HTML tags and &amp; entities as context noise.
+          cachedSummary = cached.rawText;
+          // Derive a truthful period description from the actual cached timestamps.
+          const sinceStr = summarizer.formatTimestamp(cached.sinceTs, tz);
+          const untilStr = cached.untilTs
+            ? summarizer.formatTimestamp(cached.untilTs, tz)
+            : summarizer.formatTimestamp(nowSec, tz);
+          contextDesc = `${sinceStr} — ${untilStr} (cached)`;
+        } else if (cached && !cacheValid) {
+          // Cache exists but is stale — silently discard and fall through.
+          log("DEBUG", `Stale cache for ${cacheKey} (age=${Math.round(cacheAge/3600000)}h, sinceTs=${cached.sinceTs}), falling back to fresh fetch.`);
+          contextMessages = await db.getMessages(chatId, nowSec - 24 * 3600, threadId, 5000);
+          contextDesc = locale.timeframeDefault;
+          cachedSummary = undefined;
+        } else {
+          // No cache — fall back to last 24h
+          contextMessages = await db.getMessages(chatId, nowSec - 24 * 3600, threadId, 5000);
+          contextDesc = locale.timeframeDefault;
+          cachedSummary = undefined;
+        }
+      }
+
+      // Filter commands and bot mentions
+      const filteredMessages = contextMessages.filter(msg => {
+        const msgText = msg.text || '';
+        if (msgText.startsWith('/')) return false;
+        if (botUsername && isBotMentioned(msg, botUsername)) return false;
+        return true;
+      });
+
+      const hasAnyContent = filteredMessages.some(m =>
+        (m.text && m.text.trim()) || (m.media_type && m.media_path)
+      );
+
+      if (!hasAnyContent) {
+        await ctx.reply(locale.deepDiveNoContext, replyOptions);
+        return;
+      }
+
+      statusMessage = await ctx.reply(
+        locale.deepDiveGeneratingContext,
+        { ...replyOptions, parse_mode: 'HTML' }
+      );
+
+      const { transcript } = summarizer.buildBoundedTranscript(
+        filteredMessages, tz, summarizer.MAX_TRANSCRIPT_CHARS, includeLinks
+      );
+
+      if (!transcript) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          locale.noTextMessages,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      const systemInstruction = includeLinks
+        ? `${locale.deepDiveSystemInstruction}\n${locale.citationInstruction}`
+        : locale.deepDiveSystemInstruction;
+
+      const userPrompt = locale.deepDivePrompt(question, contextDesc, transcript, cachedSummary);
+
+      log("INFO", `Deep-dive request in chat_id=${chatId} (thread_id=${threadId}): "${question.slice(0, 100)}", context: ${contextDesc}`);
+
+      const provider = summarizer.getProvider();
+      let summary: string;
+      try {
+        summary = provider === 'openai'
+          ? await summarizer.generateWithOpenAI(systemInstruction, userPrompt)
+          : await summarizer.generateWithGemini(systemInstruction, userPrompt);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log("ERROR", `Error calling ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API (deep-dive): ${errMsg}`);
+        throw err;
+      }
+
+      if (!summary) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          statusMessage.message_id,
+          undefined,
+          locale.failedToGenerate,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      let html = sanitizeHTML(summary);
+      if (includeLinks) {
+        const byId = new Map(filteredMessages.map((m) => [m.message_id, m]));
+        html = summarizer.linkifyCitations(html, byId);
+      }
+
+      const maxLength = 4000;
+      if (html.length > maxLength) {
+        const chunks = splitHTMLText(html, maxLength);
+        try {
+          await ctx.telegram.deleteMessage(ctx.chat.id, statusMessage.message_id);
+        } catch (err) {
+          log("WARN", "Could not delete status message:", safeErrorForLog(err));
+        }
+        for (const chunk of chunks) {
+          try {
+            await ctx.reply(chunk, { ...replyOptions, parse_mode: 'HTML' });
+          } catch (err) {
+            log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+            await ctx.reply(chunk, replyOptions);
+          }
+        }
+      } else {
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            html,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          log("WARN", "HTML error, falling back to plain text:", safeErrorForLog(err));
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMessage.message_id,
+            undefined,
+            html
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log("ERROR", "Error during deep-dive execution:", safeErrorForLog(err));
       try {
         if (statusMessage) {
           await ctx.telegram.editMessageText(
@@ -541,6 +874,27 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
   const isMentioned = botUsername && isBotMentioned(message, botUsername);
 
   if (isPrivate || isMentioned) {
+    // ── Deep-dive routing (must be first — even before trigger-keyword gating
+    // in private chats, so questions like "расскажи про миграцию" reach deep-dive) ──
+    if (deepDiveEnabled()) {
+      const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
+      const timeframe = parseTimeframe(text, tz);
+      const question = parseDeepDiveRequest(text, timeframe, botUsername);
+      if (question) {
+        log("INFO", `Deep-dive request detected: timeframe=${timeframe.desc || 'none'}, question="${question.slice(0, 100)}"`);
+        await runDeepDive(ctx, timeframe, question);
+        return;
+      }
+      // No question detected. In group chats, a @mention always means
+      // summarization — do it with the pre-parsed timeframe.  In private
+      // chats, fall through to the trigger-keyword gate below so that
+      // casual greetings still get the welcome message.
+      if (!isPrivate) {
+        await runSummarization(ctx, timeframe);
+        return;
+      }
+    }
+
     // In group chats, a @mention always triggers summarization (that's the bot's purpose).
     // In private chats, check for trigger keywords to distinguish summarization requests
     // from general greetings.

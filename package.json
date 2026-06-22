@@ -20,7 +20,8 @@
     "test:utils": "tsx test_utils.ts",
     "test:summarizer": "tsx test_summarizer.ts",
     "test:media": "tsx test_media.ts",
-    "test": "tsx test_db.ts && tsx test_main.ts && tsx test_parser.ts && tsx test_utils.ts && tsx test_summarizer.ts && tsx test_media.ts"
+    "test:deepdive": "tsx test_deepdive.ts",
+    "test": "tsx test_db.ts && tsx test_main.ts && tsx test_parser.ts && tsx test_utils.ts && tsx test_summarizer.ts && tsx test_media.ts && tsx test_deepdive.ts"
   },
   "files": [
     "dist",

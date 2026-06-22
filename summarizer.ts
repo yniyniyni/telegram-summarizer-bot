@@ -687,7 +687,7 @@ export function buildBoundedTranscript(
  * Generate a summary via the Google Gemini SDK.
  * Accepts either a plain text prompt (string) or a multimodal contents array.
  */
-async function generateWithGemini(
+export async function generateWithGemini(
   systemInstruction: string,
   userPromptOrContents: string | Array<{ role: string; parts: Array<Record<string, unknown>> }>
 ): Promise<string> {
@@ -719,7 +719,7 @@ async function generateWithGemini(
  * (OpenAI, OpenRouter, local servers, ...). Uses the native fetch client so
  * no extra dependency is required.
  */
-async function generateWithOpenAI(systemInstruction: string, userPrompt: string): Promise<string> {
+export async function generateWithOpenAI(systemInstruction: string, userPrompt: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("FATAL: OPENAI_API_KEY is not set. Cannot use the OpenAI-compatible provider.");
