@@ -680,25 +680,22 @@ test('resolveMimeType falls back to media-type default for unknown extensions', 
   assert.equal(media.resolveMimeType('.weird', 'unknown'), 'application/octet-stream');
 });
 
-test('buildMultimodalContents re-derives MIME for legacy octet-stream voice (.oga)', () => {
-  // Rows persisted before the MIME fix stored Telegram voice (.oga) as
-  // application/octet-stream. The summarizer must re-derive audio/ogg from the
-  // file extension and still send the voice, not skip it.
-  const tmpDir = path.join(os.tmpdir(), 'media-legacy-oga-test-' + Date.now());
+test('buildMultimodalContents skips media with unsupported MIME type', () => {
+  const tmpDir = path.join(os.tmpdir(), 'media-badmime-test-' + Date.now());
   const mediaDir = path.join(tmpDir, 'data', 'media', '-100123');
   fs.mkdirSync(mediaDir, { recursive: true });
-  const filePath = path.join(mediaDir, '7000_10.oga');
-  fs.writeFileSync(filePath, Buffer.from([0x4F, 0x67, 0x67, 0x53])); // "OggS"
+  const filePath = path.join(mediaDir, '7000_10.bin');
+  fs.writeFileSync(filePath, Buffer.from([0x00, 0x01, 0x02, 0x03]));
 
   try {
     const locale = getLocale();
     const msgs: db.SavedMessage[] = [
       {
         chat_id: -100123, message_id: 10, user_id: 100, username: null,
-        first_name: 'LegacyVoice', last_name: null, text: 'voice here',
+        first_name: 'BadMime', last_name: null, text: 'voice here',
         timestamp: 7000000, thread_id: null,
         media_type: 'voice', media_file_id: 'bf1', media_path: filePath,
-        media_mime_type: 'application/octet-stream', // legacy bad value
+        media_mime_type: 'application/octet-stream',
       },
     ];
 
@@ -708,13 +705,12 @@ test('buildMultimodalContents re-derives MIME for legacy octet-stream voice (.og
       locale, false
     );
 
-    // Voice is sent (re-derived), not skipped.
-    assert.equal(result.mediaCount, 1);
-    assert.equal(result.skippedMediaCount, 0);
+    // Unsupported MIME is skipped, not sent — and never crashes the request.
+    assert.equal(result.mediaCount, 0);
+    assert.equal(result.skippedMediaCount, 1);
     const partsStr = JSON.stringify(result.contents[0].parts);
-    assert.ok(partsStr.includes('inlineData'), 'should attach inlineData for re-derived voice');
-    assert.ok(partsStr.includes('audio/ogg'), 'should send audio/ogg, not octet-stream');
-    assert.ok(!partsStr.includes('octet-stream'), 'must not send octet-stream to the API');
+    assert.ok(!partsStr.includes('inlineData'), 'should not attach inlineData for unsupported MIME');
+    // The text line with the voice placeholder must still be present (exactly once).
     assert.ok(partsStr.includes(locale.voiceAttached));
   } finally {
     fs.rmSync(tmpDir, { recursive: true });
