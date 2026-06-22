@@ -262,6 +262,55 @@ export async function cleanupOldMessages(days: number): Promise<number> {
 }
 
 /**
+ * Returns DISTINCT non-null media_path values for messages older than the specified
+ * number of days. Used before cleanup to identify files on disk that can be deleted.
+ */
+export async function getOldMediaPaths(days: number): Promise<string[]> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  const cutoff = Math.floor(Date.now() / 1000) - (days * 24 * 3600);
+  const rows = await dbInstance.all<{ media_path: string }[]>(
+    "SELECT DISTINCT media_path FROM messages WHERE timestamp < ? AND media_path IS NOT NULL",
+    [cutoff]
+  );
+  return rows.map(r => r.media_path).filter((p): p is string => p !== null && p !== '');
+}
+
+/**
+ * Returns the oldest records that have a non-null media_path, up to the given limit.
+ * Used to trim the oldest media files when storage is running low.
+ */
+export async function getOldestMediaRecords(limit: number): Promise<
+  Array<{ media_path: string | null; chat_id: number; message_id: number }>
+> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  const rows = await dbInstance.all<
+    { media_path: string; chat_id: number; message_id: number }[]
+  >(
+    "SELECT media_path, chat_id, message_id FROM messages WHERE media_path IS NOT NULL ORDER BY timestamp ASC LIMIT ?",
+    [limit]
+  );
+  return rows;
+}
+
+/**
+ * Sets media_path = NULL for all messages that have the given media_path value.
+ * Called after the file on disk has been deleted, to keep the DB consistent.
+ */
+export async function clearMediaPath(mediaPath: string): Promise<void> {
+  if (!dbInstance) {
+    throw new Error("Database not initialized. Call initDb() first.");
+  }
+  await dbInstance.run(
+    "UPDATE messages SET media_path = NULL WHERE media_path = ?",
+    [mediaPath]
+  );
+}
+
+/**
  * Close the database connection. Useful for test teardowns.
  */
 export async function closeDb(): Promise<void> {
