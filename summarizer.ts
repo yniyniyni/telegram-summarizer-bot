@@ -164,12 +164,68 @@ export function buildMultimodalContents(
   const parts: Array<Record<string, unknown>> = [];
   let mediaCount = 0;
   let skippedMediaCount = 0;
+  const isRedact = process.env.REDACT_USER_IDENTITIES === 'true';
 
   // Build text preamble (rules + instructions, without the transcript)
   const preambleText = locale.userPromptTemplate(timeframeDesc, messages.length, '')
     .replace('\n---\n<untrusted_transcript>\n\n</untrusted_transcript>\n---\n', '');
 
   parts.push({ text: preambleText + '\n\nHere is the message history to analyze:\n---' });
+
+  // PII redaction prep (mirrors buildBoundedTranscript logic)
+  let userIdToPseudonym: Map<number, string> | null = null;
+  let redactTargets: Target[] = [];
+
+  if (isRedact) {
+    userIdToPseudonym = new Map<number, string>();
+    let userCount = 0;
+
+    const buildTargetRegex = (target: string, pseudonym: string): Target => {
+      const isMention = target.startsWith('@');
+      const cleanTarget = isMention ? target.slice(1) : target;
+      const escaped = cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const hasCyrillic = /[а-яёА-ЯЁ]/.test(cleanTarget);
+
+      let regex: RegExp;
+      if (isMention) {
+        regex = new RegExp(`(?<![A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_])`, 'gi');
+      } else if (hasCyrillic) {
+        regex = new RegExp(`(?<=^|[^а-яё])${escaped}(?=$|[^а-яё])`, 'gi');
+      } else {
+        regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+      }
+      return { regex, pseudonym, length: target.length };
+    };
+
+    for (const msg of messages) {
+      if (msg.user_id === undefined || msg.user_id === null) continue;
+      if (!userIdToPseudonym.has(msg.user_id)) {
+        userCount++;
+        const pseudonym = `User ${userCount}`;
+        userIdToPseudonym.set(msg.user_id, pseudonym);
+
+        const first = (msg.first_name || '').trim();
+        const last = (msg.last_name || '').trim();
+        const username = (msg.username || '').trim();
+
+        if (first && last) {
+          const fullName = `${first} ${last}`;
+          if (fullName.length > 2) redactTargets.push(buildTargetRegex(fullName, pseudonym));
+        }
+        if (first && first !== 'Anonymous' && first !== 'Без имени' && first.length > 2) {
+          redactTargets.push(buildTargetRegex(first, pseudonym));
+        }
+        if (last && last.length > 2) {
+          redactTargets.push(buildTargetRegex(last, pseudonym));
+        }
+        if (username) {
+          redactTargets.push(buildTargetRegex(`@${username}`, pseudonym));
+          redactTargets.push(buildTargetRegex(username, pseudonym));
+        }
+      }
+    }
+    redactTargets.sort((a, b) => b.length - a.length);
+  }
 
   // Walk messages in chronological order
   for (const msg of messages) {
@@ -185,14 +241,30 @@ export function buildMultimodalContents(
     }
 
     // Build text line for this message
-    let textLine = formatMessageLine(msg, timezoneName, includeIds);
-    if (!textLine) {
-      // No text — generate a line from metadata
-      const timeStr = formatTimestamp(msg.timestamp, timezoneName);
-      const firstName = msg.first_name || locale.noName;
-      const userInfo = firstName;
-      const prefix = includeIds ? `#${msg.message_id} | ` : '';
-      textLine = `[${prefix}${timeStr}] ${userInfo}: `;
+    let textLine: string | null = null;
+    const rawText = (msg.text || '').trim();
+    const timeStr = formatTimestamp(msg.timestamp, timezoneName);
+    const prefix = includeIds ? `#${msg.message_id} | ` : '';
+
+    if (isRedact && userIdToPseudonym) {
+      // PII mode: pseudonymize name and redact text
+      const pseudonym = userIdToPseudonym.get(msg.user_id) || 'User Unknown';
+      let redactedText = rawText;
+      for (const target of redactTargets) {
+        redactedText = redactedText.replace(target.regex, target.pseudonym);
+      }
+      redactedText = redactedText.replace(/@\w+/g, '@user_redacted');
+      if (!rawText && !hasMedia) continue; // skip empty text-only messages in redact mode
+      textLine = rawText
+        ? `[${prefix}${timeStr}] ${pseudonym}: ${redactedText}`
+        : `[${prefix}${timeStr}] ${pseudonym}: `;
+    } else {
+      // Normal mode: use formatMessageLine
+      textLine = formatMessageLine(msg, timezoneName, includeIds);
+      if (!textLine) {
+        const firstName = msg.first_name || locale.noName;
+        textLine = `[${prefix}${timeStr}] ${firstName}: `;
+      }
     }
 
     // Append media placeholder to text line
