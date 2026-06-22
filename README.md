@@ -16,6 +16,8 @@ An asynchronous Telegram bot built with Node.js, TypeScript, and the `telegraf` 
 *   **Markup protection**: Sanitizes the LLM output for Telegram HTML, converts basic Markdown formatting, and falls back to plain text if Telegram still rejects the markup.
 *   **Topic (Thread) compatibility**: Correctly handles and stores `thread_id` for forum-like supergroups.
 *   **Private chat support**: In private chats, trigger keywords start summarization; other messages receive a short welcome/help response.
+*   **Multimodal media understanding** *(opt-in, Gemini only)*: When enabled, the bot logs and sends images, voice messages, and video notes to the model so summaries can reflect their content, not just text. Off by default; enable per type via `MULTIMODAL_*` flags.
+*   **Deep-dive Q&A** *(opt-in)*: When enabled, mentioning the bot with an actual question (e.g. *"@bot why did we postpone the release?"*) returns a focused answer drawn from chat history instead of a standard structured summary. Off by default; enable with `DEEP_DIVE_ENABLED=true`.
 
 ---
 
@@ -55,6 +57,15 @@ You can choose the LLM provider, configure rate limits, privacy modes, and white
     *   `REDACT_USER_IDENTITIES`: Set to `true` to enable user identity redaction in transcripts. In this mode, real names and usernames in message headers and bodies are replaced with stable pseudonyms (e.g., `User 1`, `User 2`), and any other username mentions are replaced with `@user_redacted`.
 *   **Message Links**:
     *   `INCLUDE_MESSAGE_LINKS`: Set to `true` to append one source-message link per topic in the "Main Topics of Discussion" section of each summary. Works only in private supergroups/channels (Telegram `t.me/c/…` links); basic groups and DMs are skipped automatically. Default: `false`. Independent of `REDACT_USER_IDENTITIES`.
+*   **Multimodal Support** (Gemini only — has no effect with `LLM_PROVIDER=openai`, which logs a startup warning):
+    *   `MULTIMODAL_ENABLED`: Master switch (default: `false`). Must be `true` for any media logging/processing; the per-type flags below are ignored while it is off.
+    *   `MULTIMODAL_IMAGES_ENABLED` / `MULTIMODAL_VOICE_ENABLED` / `MULTIMODAL_VIDEO_NOTE_ENABLED`: Per-type toggles (default: `false` each) for images, voice messages, and video notes.
+    *   `MULTIMODAL_INCLUDE_BY_DEFAULT`: When `true`, media is always included in summaries. When `false` (default), media is included only if the request mentions it (e.g. *with images*, *с медиа*, *войс*, *кружки*).
+    *   `MEDIA_STORAGE_MAX_MB`: Disk budget for stored media files (default: `500`). When exceeded, the oldest files are deleted first.
+    *   `MULTIMODAL_FILES_API`: How media is sent to Gemini — `off` (default; inline base64 with conservative per-type caps of 1 MB image / 3 MB voice / 5 MB video note), `ondemand` (upload to the Gemini Files API at summarization time, removing the inline caps), or `cache` (like `ondemand` but reuse the uploaded URI across summaries within Google's ~48h retention window).
+    *   `MEDIA_MAX_DOWNLOAD_MB`: When the Files API is enabled, replaces the per-type inline caps with a single cap (default: `20`, the Telegram Bot API ceiling for `getFile`).
+*   **Deep-dive Q&A**:
+    *   `DEEP_DIVE_ENABLED`: Set to `true` to enable deep-dive mode (default: `false`). When on, a mention/DM that contains an interrogative marker (e.g. *what, why, how, tell me, расскажи, почему*) is answered as a specific question instead of producing a standard summary; a markerless mention still triggers a normal summary. With an explicit timeframe the answer uses that window's messages; with no timeframe it reuses the most recent cached summary for that chat (kept up to 3 days), falling back to the last 24 hours. Deep-dive analyzes **text only** — even with multimodality enabled, media is not sent to the model in this mode.
 *   **Logging**:
     *   `DEBUG=true`, `DEBUG=1`, or `LOG_LEVEL=debug`: Enables debug logs. Non-debug logs are always printed.
 *   **Database path**:
@@ -144,6 +155,15 @@ node dist/main.js
 *Note: If the time period cannot be parsed, the bot defaults to summarizing the last 24 hours.*
 
 In private chats, send a trigger phrase such as `summarize the last hour` or `суммаризуй за час` to summarize messages visible in that private chat.
+
+### Deep-dive Q&A (optional)
+
+With `DEEP_DIVE_ENABLED=true`, instead of a full summary you can ask the bot a specific question and get a focused answer from the chat history:
+*   `@bot_username what did we decide about the migration?`
+*   `@bot_username tell me more about yesterday's incident`
+*   `@bot_username why was the deploy postponed for the last 3 hours?` (a timeframe scopes the answer to that window)
+
+A mention without a question word still produces a normal summary, so existing usage is unchanged.
 
 ## License
 
