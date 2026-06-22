@@ -8,6 +8,7 @@ import { escapeHTML, log } from './utils.js';
 
 let aiInstance: GoogleGenAI | null = null;
 export const MAX_TRANSCRIPT_CHARS = 1_000_000;
+export const MAX_MULTIMODAL_BASE64_BYTES = 10_000_000; // 10 MB base64-encoded — grace skip before hitting Gemini API limit
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
@@ -164,6 +165,7 @@ export function buildMultimodalContents(
   const parts: Array<Record<string, unknown>> = [];
   let mediaCount = 0;
   let skippedMediaCount = 0;
+  let totalBase64Bytes = 0;
   const isRedact = process.env.REDACT_USER_IDENTITIES === 'true';
 
   // Build text preamble (rules + instructions, without the transcript)
@@ -278,22 +280,29 @@ export function buildMultimodalContents(
 
     parts.push({ text: textLine });
 
-    // Append inlineData part if media is included
+    // Append inlineData part if media is included and within size budget
     if (hasMedia && includeThisMedia && msg.media_path) {
       try {
         const absPath = path.resolve(msg.media_path);
         if (fs.existsSync(absPath)) {
           const buffer = fs.readFileSync(absPath);
           const base64 = buffer.toString('base64');
-          const mimeType = msg.media_mime_type || 'application/octet-stream';
 
-          parts.push({
-            inlineData: {
-              mimeType,
-              data: base64,
-            },
-          });
-          mediaCount++;
+          if (totalBase64Bytes + base64.length > MAX_MULTIMODAL_BASE64_BYTES) {
+            skippedMediaCount++;
+            log("DEBUG", `Skipping media file ${msg.media_path}: would exceed multimodal payload limit (${(totalBase64Bytes + base64.length).toLocaleString()} > ${MAX_MULTIMODAL_BASE64_BYTES.toLocaleString()} bytes)`);
+          } else {
+            const mimeType = msg.media_mime_type || 'application/octet-stream';
+
+            parts.push({
+              inlineData: {
+                mimeType,
+                data: base64,
+              },
+            });
+            totalBase64Bytes += base64.length;
+            mediaCount++;
+          }
         } else {
           skippedMediaCount++;
           log("DEBUG", `Media file not found on disk: ${msg.media_path}`);

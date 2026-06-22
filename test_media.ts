@@ -478,9 +478,7 @@ test('buildMultimodalContents: missing media file increments skippedMediaCount',
 });
 
 test('buildMultimodalContents: user info included in media message text lines', () => {
-  // NOTE: PII redaction (REDACT_USER_IDENTITIES) is not yet implemented
-  // in buildMultimodalContents. This test verifies the current behavior
-  // where real user names are included in text lines.
+  // Default behavior (REDACT_USER_IDENTITIES unset): real names ARE present
   const locale = getLocale();
   const msgs: db.SavedMessage[] = [{
     chat_id: -100123, message_id: 5, user_id: 500, username: '@realuser',
@@ -496,9 +494,52 @@ test('buildMultimodalContents: user info included in media message text lines', 
   );
 
   const partsStr = JSON.stringify(result.contents[0].parts);
-  // Currently, real names ARE present (no PII redaction in multimodal path)
+  // Default (non-redacted): real names ARE present
   assert.ok(partsStr.includes('RealName'));
   assert.ok(partsStr.includes('realuser'));
+});
+
+test('buildMultimodalContents: PII redaction replaces names with pseudonyms', () => {
+  process.env.REDACT_USER_IDENTITIES = 'true';
+  const tmpDir = path.join(os.tmpdir(), 'media-pii-mm-' + Date.now());
+  const mediaDir = path.join(tmpDir, 'data', 'media', '-100123');
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const imgPath = path.join(mediaDir, '4000_99.jpg');
+  fs.writeFileSync(imgPath, Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]));
+
+  const locale = getLocale();
+  const relPath = path.relative('.', imgPath);
+  const msgs: db.SavedMessage[] = [{
+    chat_id: -100123, message_id: 99, user_id: 700, username: 'real_ivan',
+    first_name: 'Иван', last_name: 'Иванов', text: 'Привет от Иван Иванов, напиши @real_ivan или @another_user.',
+    timestamp: 7000000, thread_id: null,
+    media_type: 'image', media_file_id: 'f_pii', media_path: relPath, media_mime_type: 'image/jpeg',
+  }];
+
+  const result = summarizer.buildMultimodalContents(
+    msgs, 'test period', 'UTC',
+    { images: true, voice: false, videoNote: false },
+    locale, false
+  );
+
+  const partsStr = JSON.stringify(result.contents[0].parts);
+  // Real names MUST NOT appear
+  assert.ok(!partsStr.includes('Иван'));
+  assert.ok(!partsStr.includes('Иванов'));
+  assert.ok(!partsStr.includes('real_ivan'));
+  // Pseudonyms must be present
+  assert.ok(partsStr.includes('User '), `Expected 'User N' pseudonym`);
+  // Unknown @mentions redacted
+  assert.ok(partsStr.includes('@user_redacted'), `Expected '@user_redacted'`);
+  // InlineData unaffected by text redaction
+  assert.equal(result.mediaCount, 1);
+
+  delete process.env.REDACT_USER_IDENTITIES;
+  fs.unlinkSync(imgPath);
+  fs.rmdirSync(mediaDir);
+  fs.rmdirSync(path.dirname(mediaDir));
+  fs.rmdirSync(path.dirname(path.dirname(mediaDir)));
+  fs.rmdirSync(tmpDir);
 });
 
 test('buildMultimodalContents: media-only message (empty text) gets generated line with placeholder', () => {
