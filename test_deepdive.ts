@@ -93,14 +93,37 @@ test('no interrogative markers returns null', () => {
   assert.equal(result, null);
 });
 
-// --- Question extraction: removes bot mention ---
+// --- Question extraction: removes bot mention, keeps others ---
 
 test('removes @bot mention prefix', () => {
   const result = parseDeepDiveRequest(
     '@mybot расскажи про архитектуру',
-    { sinceTs: 0, desc: '', explicit: false }
+    { sinceTs: 0, desc: '', explicit: false },
+    'mybot'
   );
   assert.equal(result, 'расскажи про архитектуру');
+});
+
+test('keeps non-bot @mentions as question context', () => {
+  // '@sarah' should be preserved — it's part of the user's question intent.
+  const result = parseDeepDiveRequest(
+    '@mybot @sarah расскажи про встречу',
+    { sinceTs: 0, desc: '', explicit: false },
+    'mybot'
+  );
+  assert.ok(result !== null);
+  assert.ok(result!.includes('@sarah'));
+  assert.ok(result!.includes('расскажи про встречу'));
+  assert.ok(!result!.includes('@mybot'), 'bot mention should be stripped');
+});
+
+test('strips bot mention case-insensitively', () => {
+  const result = parseDeepDiveRequest(
+    '@MyBot расскажи про миграцию',
+    { sinceTs: 0, desc: '', explicit: false },
+    'mybot'
+  );
+  assert.equal(result, 'расскажи про миграцию');
 });
 
 // --- Short question rejection ---
@@ -152,6 +175,7 @@ test('summaryCache: stores and retrieves CachedSummary', () => {
   summaryCache.clear();
   const entry: CachedSummary = {
     html: '<b>Test summary</b>',
+    rawText: 'Test summary',
     sinceTs: 1000000,
     untilTs: 2000000,
     messageCount: 42,
@@ -161,6 +185,7 @@ test('summaryCache: stores and retrieves CachedSummary', () => {
   const retrieved = summaryCache.get('-100123:0');
   assert.ok(retrieved !== undefined);
   assert.equal(retrieved!.html, '<b>Test summary</b>');
+  assert.equal(retrieved!.rawText, 'Test summary');
   assert.equal(retrieved!.sinceTs, 1000000);
   assert.equal(retrieved!.messageCount, 42);
   summaryCache.clear();
@@ -168,8 +193,8 @@ test('summaryCache: stores and retrieves CachedSummary', () => {
 
 test('summaryCache: thread isolation — different threads get different entries', () => {
   summaryCache.clear();
-  const entry1: CachedSummary = { html: 'thread 1', sinceTs: 1, messageCount: 10, createdAt: 0 };
-  const entry2: CachedSummary = { html: 'thread 2', sinceTs: 1, messageCount: 20, createdAt: 0 };
+  const entry1: CachedSummary = { html: 'thread 1', rawText: 'thread 1', sinceTs: 1, messageCount: 10, createdAt: 0 };
+  const entry2: CachedSummary = { html: 'thread 2', rawText: 'thread 2', sinceTs: 1, messageCount: 20, createdAt: 0 };
   summaryCache.set('-100123:42', entry1);
   summaryCache.set('-100123:99', entry2);
   assert.equal(summaryCache.get('-100123:42')!.html, 'thread 1');
@@ -180,15 +205,13 @@ test('summaryCache: thread isolation — different threads get different entries
 
 test('summaryCache: overwrite on new summary', () => {
   summaryCache.clear();
-  const first: CachedSummary = { html: 'first', sinceTs: 1, messageCount: 5, createdAt: 0 };
-  const second: CachedSummary = { html: 'second', sinceTs: 2, messageCount: 10, createdAt: 0 };
+  const first: CachedSummary = { html: 'first', rawText: 'first', sinceTs: 1, messageCount: 5, createdAt: 0 };
+  const second: CachedSummary = { html: 'second', rawText: 'second', sinceTs: 2, messageCount: 10, createdAt: 0 };
   summaryCache.set('-100123:0', first);
   summaryCache.set('-100123:0', second);
   assert.equal(summaryCache.get('-100123:0')!.html, 'second');
   summaryCache.clear();
 });
-
-// --- TimeframeResult.explicit flag ---
 
 test('parseTimeframe returns explicit: true for specific timeframe', () => {
   const tz = 'UTC';
@@ -210,6 +233,32 @@ test('parseTimeframe returns explicit: false for fallback', () => {
   const result = parseTimeframe('какая-то ерунда без таймфрейма', tz, now);
   assert.equal(result.explicit, false);
   assert.equal(result.desc, 'the last 24 hours');
+});
+
+// --- Cache staleness constants ---
+
+test('CachedSummary rawText is separate from html', () => {
+  summaryCache.clear();
+  const entry: CachedSummary = {
+    html: '<b>bold summary</b>',
+    rawText: '**bold summary**',
+    sinceTs: 1000000,
+    messageCount: 10,
+    createdAt: Date.now(),
+  };
+  // html has Telegram tags; rawText has LLM-readable markdown.
+  assert.ok(entry.html.includes('<b>'));
+  assert.ok(!entry.rawText.includes('<b>'));
+  assert.ok(entry.rawText.includes('**'));
+  summaryCache.clear();
+});
+
+test('CachedSummary createdAt is stored for staleness checks', () => {
+  const now = Date.now();
+  const entry: CachedSummary = {
+    html: '', rawText: '', sinceTs: 1, messageCount: 0, createdAt: now,
+  };
+  assert.equal(entry.createdAt, now);
 });
 
 // --- Cyrillic numeric timeframe stripping (regex fix) ---

@@ -390,8 +390,14 @@ export async function logMessage(ctx: Context): Promise<void> {
 const activeLocks = new Set<number>();
 
 // ── Summary cache for deep-dive mode ──
+const CACHE_MAX_AGE_MS = 72 * 3600 * 1000; // 3 days — drop cached summaries older than this
+const DB_CLEANUP_WINDOW_SEC = 30 * 86400;  // aligned with db.cleanupOldMessages(30)
+
 export interface CachedSummary {
+  /** Telegram-safe HTML (sanitized) — for stats / future display, NOT for LLM prompts. */
   html: string;
+  /** Raw LLM output (pre-sanitizeHTML) — what gets injected into deep-dive prompts. */
+  rawText: string;
   sinceTs: number;
   untilTs?: number;
   messageCount: number;
@@ -417,12 +423,18 @@ const INTERROGATIVE_MARKERS = [
 // ── Deep-dive request parsing ──
 export function parseDeepDiveRequest(
   text: string,
-  parsedTimeframe: TimeframeResult
+  parsedTimeframe: TimeframeResult,
+  botUsername?: string
 ): string | null {
   let remaining = text;
 
-  // 1. Remove @bot mention
-  remaining = remaining.replace(/@\w+\s*/g, '').trim();
+  // 1. Remove the target bot's @mention only — keep other @mentions
+  //    like @sarah or @devteam as user-intended question context.
+  if (botUsername) {
+    remaining = remaining.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
+  } else {
+    remaining = remaining.replace(/@\w+\s*/g, '').trim();
+  }
 
   // 2. Remove timeframe description phrase
   if (parsedTimeframe.desc) {
@@ -590,11 +602,14 @@ async function runSummarization(ctx: Context, preParsedTimeframe?: TimeframeResu
         }
       }
 
-      // Save to deep-dive cache
+      // Save to deep-dive cache — store BOTH the sanitized HTML (for Telegram)
+      // and the raw text (for future LLM prompts, so we don't inject HTML tags
+      // and entities into the LLM context).
       if (deepDiveEnabled()) {
         const cacheKey = `${chatId}:${threadId ?? 0}`;
         summaryCache.set(cacheKey, {
           html: summaryText,
+          rawText: rawSummaryText,
           sinceTs,
           untilTs,
           messageCount: filteredMessages.length,
@@ -677,14 +692,35 @@ async function runDeepDive(
       } else {
         // Scenario: no explicit timeframe — use cached summary + raw messages
         const cached = summaryCache.get(cacheKey);
-        if (cached) {
+        // Bail on cache if it is too old (3d) or if its sinceTs predates the
+        // DB cleanup window (30d) — messages may have been deleted so the
+        // cached summary would reference topics missing from the transcript.
+        const cacheAge = cached ? Date.now() - cached.createdAt : Infinity;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const cacheValid = cached
+          && cacheAge < CACHE_MAX_AGE_MS
+          && cached.sinceTs > (nowSec - DB_CLEANUP_WINDOW_SEC);
+
+        if (cached && cacheValid) {
           contextMessages = await db.getMessages(chatId, cached.sinceTs, threadId, 5000, cached.untilTs);
-          cachedSummary = cached.html;
-          contextDesc = `${locale.timeframeDefault} (cached)`;
+          // Use rawText (pre-sanitizeHTML) for the LLM prompt — avoids
+          // injecting HTML tags and &amp; entities as context noise.
+          cachedSummary = cached.rawText;
+          // Derive a truthful period description from the actual cached timestamps.
+          const sinceStr = summarizer.formatTimestamp(cached.sinceTs, tz);
+          const untilStr = cached.untilTs
+            ? summarizer.formatTimestamp(cached.untilTs, tz)
+            : summarizer.formatTimestamp(nowSec, tz);
+          contextDesc = `${sinceStr} — ${untilStr} (cached)`;
+        } else if (cached && !cacheValid) {
+          // Cache exists but is stale — silently discard and fall through.
+          log("DEBUG", `Stale cache for ${cacheKey} (age=${Math.round(cacheAge/3600000)}h, sinceTs=${cached.sinceTs}), falling back to fresh fetch.`);
+          contextMessages = await db.getMessages(chatId, nowSec - 24 * 3600, threadId, 5000);
+          contextDesc = locale.timeframeDefault;
+          cachedSummary = undefined;
         } else {
           // No cache — fall back to last 24h
-          const since = Math.floor(Date.now() / 1000) - 24 * 3600;
-          contextMessages = await db.getMessages(chatId, since, threadId, 5000);
+          contextMessages = await db.getMessages(chatId, nowSec - 24 * 3600, threadId, 5000);
           contextDesc = locale.timeframeDefault;
           cachedSummary = undefined;
         }
@@ -842,7 +878,7 @@ async function handleBotMentionOrPrivate(ctx: Context): Promise<void> {
     if (deepDiveEnabled()) {
       const tz = process.env.DEFAULT_TIMEZONE || 'Europe/Moscow';
       const timeframe = parseTimeframe(text, tz);
-      const question = parseDeepDiveRequest(text, timeframe);
+      const question = parseDeepDiveRequest(text, timeframe, botUsername);
       if (question) {
         log("INFO", `Deep-dive request detected: timeframe=${timeframe.desc || 'none'}, question="${question.slice(0, 100)}"`);
         await runDeepDive(ctx, timeframe, question);
